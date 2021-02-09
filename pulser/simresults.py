@@ -167,12 +167,12 @@ class SimulationResults:
         dist = np.random.multinomial(N_samples, weights)
         return {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]}
 
-    def detection_from_basis_state(self, state, N_d, error_probs):
+    def detection_from_basis_state(self, shot, N_d, error_probs):
         r"""Returns the distribution of states really detected instead of
         state in ground-rydberg measurement basis.
     
         Args:
-            state (str): binary string of length the number of atoms of the
+            shot (str): binary string of length the number of atoms of the
             simulation.
             N_samples (int): Number of times state has been detected.
             error_probs (dict): dictionnary gathering the SPAM error
@@ -181,20 +181,20 @@ class SimulationResults:
         """
     
         prob_0_to_1 = error_probs['epsilon_prime'] * (1
-                - error_probs['epsilon']) ** state.count('0') * (1
-                - error_probs['epsilon_prime']) ** (state.count('1') - 1)
+                - error_probs['epsilon']) ** shot.count('0') * (1
+                - error_probs['epsilon_prime']) ** (shot.count('1') - 1)
         prob_1_to_0 = error_probs['epsilon'] * (1 - error_probs['epsilon']) \
-            ** (state.count('0') - 1) * (1 - error_probs['epsilon_prime']) \
-            ** state.count('1')
-        probs = [int(state[i]) * prob_1_to_0 + (1 - int(state[i]))
-                 * prob_0_to_1 for i in range(len(state))]
+            ** (shot.count('0') - 1) * (1 - error_probs['epsilon_prime']) \
+            ** shot.count('1')
+        probs = [int(shot[i]) * prob_1_to_0 + (1 - int(shot[i]))
+                 * prob_0_to_1 for i in range(len(shot))]
         probs += [1 - sum(probs)]
         shots = np.random.multinomial(N_d, probs)
-        detected_dict = {state: shots[-1]}
+        detected_dict = {shot: shots[-1]}
     
-        for i in range(len(state)):
+        for i in range(len(shot)):
             if shots[i]:
-                detected_dict[state[:i] + str(1 - int(state[i])) + state[i
+                detected_dict[shot[:i] + str(1 - int(shot[i])) + shot[i
                               + 1:]] = shots[i]
         return detected_dict
     
@@ -204,7 +204,7 @@ class SimulationResults:
         sampled_state.
     
         Args:
-            state (dict): dictionnary of detected states as binary string with
+            sampled_state (dict): dictionnary of detected states as binary string with
             their detection number.
             error_probs (dict): dictionnary gathering the SPAM error
             probabilities.
@@ -212,8 +212,8 @@ class SimulationResults:
         """
     
         detected_sample_dict = {}
-        for (state, N_d) in sampled_state.items():
-            dict_state = self.detection_from_basis_state(state, N_d,
+        for (shot, N_d) in sampled_state.items():
+            dict_state = self.detection_from_basis_state(shot, N_d,
                     error_probs)
             detected_sample_dict = Counter(detected_sample_dict) \
                 + Counter(dict_state)
