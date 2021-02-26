@@ -46,4 +46,7 @@ def init():
     op = {'bounds':bounds,'n_r':30,'n_c':60,'initial_point_generator':lhs2,'score_limit':0.1}
     
     global result_string
-    result_string = "Result_MBL_{}_{}".format(N,W)
+    result_string = "Result_MBL.txt"
+    
+    global alpha
+    alpha = 0.07 * np.pi
