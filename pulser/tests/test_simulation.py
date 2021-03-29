@@ -72,7 +72,6 @@ def test_initialization_and_construction_of_hamiltonian():
     assert sim._size == len(seq.qubit_info)
     assert sim._tot_duration == duration * d
     assert sim._qid_index == {"control1": 0, "target": 1, "control2": 2}
-
     with pytest.raises(ValueError, match='too small, less than'):
         Simulation(seq, sampling_rate=0.0001)
     with pytest.raises(ValueError, match='positive and not larger'):

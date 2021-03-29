@@ -14,7 +14,7 @@
 
 import qutip
 import numpy as np
-
+from collections import Counter
 
 class SimulationResults:
     """Results of a simulation run of a pulse sequence.
@@ -219,60 +219,83 @@ class SimulationResults:
         dist = np.random.multinomial(N_samples, weights)
         return {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]}
 
-    def detection_from_basis_state(self, shot, N_d, error_probs):
+    def detection_from_basis_state(self, bitstring, N_d, error_probs):
         r"""Returns the distribution of states really detected instead of
         state in ground-rydberg measurement basis.
 
         Args:
-            shot (str): binary string of length the number of atoms of the
+            bitstring (str): binary string of length the number of atoms of the
             simulation.
             N_samples (int): Number of times state has been detected.
             error_probs (dict): dictionnary gathering the SPAM error
             probabilities.
-
         """
 
-        "This is the probability for an individual atom to be wrongly measured"
-        "as a 0 instead of a 1, using errors in measurements of other atoms"
-        prob_0_to_1 = error_probs['epsilon_prime'] * (1
-                - error_probs['epsilon']) ** shot.count('0') * (1
-                - error_probs['epsilon_prime']) ** (shot.count('1') - 1)
-        prob_1_to_0 = error_probs['epsilon'] * (1 - error_probs['epsilon']) \
-            ** (shot.count('0') - 1) * (1 - error_probs['epsilon_prime']) \
-            ** shot.count('1')
+        def _calculate_probabilities(self):
+            """
+                Returns the probabilities for an individual atom to be wrongly
+                measured as a 0 instead of a 1 (vice-versa) using errors in
+                measurements of other atoms error_probs[epsilon] = probability
+                of a bad 0, epsilon_prime for a bad 1
+            """
+            prob_bad_1 = error_probs['epsilon_prime'] \
+                * (1-error_probs['epsilon']) ** bitstring.count('0') \
+                * (1-error_probs['epsilon_prime']) ** (bitstring.count('1')-1)
+            prob_bad_0 = error_probs['epsilon'] * (1 - error_probs['epsilon'])\
+                ** (bitstring.count('0')-1)*(1-error_probs['epsilon_prime'])\
+                ** bitstring.count('1')
 
-        "probs[i] is the probability for atom i to have a wrong measurement"
-        probs = [int(shot[i]) * prob_1_to_0 + (1 - int(shot[i]))
-                 * prob_0_to_1 for i in range(len(shot))]
-        probs += [1 - sum(probs)]
-        shots = np.random.multinomial(N_d, probs)
-        detected_dict = {shot: shots[-1]}
+            return (prob_bad_1, prob_bad_0)
 
-        for i in range(len(shot)):
-            if shots[i]:
-                "Each state where atom i has changed states is counted shots[i]"
-                "times after the error simulation"
-                detected_dict[shot[:i] + str(1 - int(shot[i])) + shot[i
-                              + 1:]] = shots[i]
+        def _swap_bit(bitstring, i):
+            """
+                Swaps bit i for its conjugate in a given bitstring
+            """
+            return bitstring[:i] + str(1 - int(bitstring[i])) \
+                                 + bitstring[i + 1:]
+
+        def _build_proba_list(self):
+            """
+                Returns probability list probs, where
+                probs[i] is the probability for atom i to have a wrong
+                measurement
+            """
+            (prob_bad_1, prob_bad_0) = _calculate_probabilities(self)
+            probs = [int(bitstring[i]) * prob_bad_1 + (1 - int(bitstring[i]))
+                     * prob_bad_0 for i in range(len(bitstring))]
+            probs += [1 - sum(probs)]
+            return probs
+
+        probs = _build_proba_list(self)
+
+        bitstrings = np.random.multinomial(N_d, probs)
+        "Last bitstring is the unchanged bitstring"
+        detected_dict = {bitstring: bitstrings[-1]}
+
+        for i in range(len(bitstring)):
+            if bitstrings[i]:
+                "Each state where atom i has changed states is counted"
+                "bitstrings[i] times after the error simulation"
+                detected_dict[_swap_bit(bitstring, i)] = bitstrings[i]
         return detected_dict
 
-
     def sampling_with_detection_errors(self, sampled_state, error_probs):
-        r"""Returns the distribution of states really detected instead of
-        sampled_state.
+        r"""
+            Returns the distribution of states really detected instead of
+            sampled_state.
 
-        Args:
-            sampled_state (dict): dictionnary of detected states as binary string with
-            their detection number.
-            error_probs (dict): dictionnary gathering the SPAM error
-            probabilities.
-
+            Args:
+                sampled_state (dict): dictionnary of detected states as binary
+                string with their detection number.
+                error_probs (dict): dictionnary gathering the SPAM error
+                probabilities.
         """
 
         detected_sample_dict = {}
-        for (shot, N_d) in sampled_state.items():
-            dict_state = self.detection_from_basis_state(shot, N_d,
-                    error_probs)
+        for bitstring in sampled_state:
+            dict_state = self.detection_from_basis_state(bitstring,
+                                                      sampled_state[bitstring],
+                                                      error_probs)
             detected_sample_dict = Counter(detected_sample_dict) \
                 + Counter(dict_state)
 
