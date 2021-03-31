@@ -16,6 +16,7 @@ import qutip
 import numpy as np
 from collections import Counter
 
+
 class SimulationResults:
     """Results of a simulation run of a pulse sequence.
 
@@ -219,6 +220,75 @@ class SimulationResults:
         dist = np.random.multinomial(N_samples, weights)
         return {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]}
 
+    def sample_state(self, t, meas_basis=None, N_samples=1000):
+        r"""Same as sample_final_state, but at a given time t.
+
+        Keyword Args:
+            meas_basis (str, default=None): 'ground-rydberg' or 'digital'. If
+                left as None, uses the measurement basis defined in the
+                original sequence.
+            N_samples (int, default=1000): Number of samples to take.
+
+        Raises:
+            ValueError: If trying to sample without a defined 'meas_basis' in
+                the arguments when the original sequence is not measured.
+        """
+        if meas_basis is None:
+            if self._meas_basis is None:
+                raise ValueError(
+                    "Can't accept an undefined measurement basis because the "
+                    "original sequence has no measurement."
+                    )
+            meas_basis = self._meas_basis
+
+        if meas_basis not in {'ground-rydberg', 'digital'}:
+            raise ValueError(
+                "'meas_basis' can only be 'ground-rydberg' or 'digital'."
+                )
+
+        N = self._size
+        self.N_samples = N_samples
+        probs = np.abs(self._states[t].full())**2
+        if self._dim == 2:
+            if meas_basis == self._basis_name:
+                # State vector ordered with r first for 'ground_rydberg'
+                # e.g. N=2: [rr, rg, gr, gg] -> [11, 10, 01, 00]
+                # Invert the order ->  [00, 01, 10, 11] correspondence
+                weights = probs if meas_basis == 'digital' else probs[::-1]
+            else:
+                return {'0' * N: int(N_samples)}
+            weights = weights.flatten()
+
+        elif self._dim == 3:
+            if meas_basis == 'ground-rydberg':
+                one_state = 0       # 1 = |r>
+                ex_one = slice(1, 3)
+            elif meas_basis == 'digital':
+                one_state = 2       # 1 = |h>
+                ex_one = slice(0, 2)
+
+            probs = probs.reshape([3]*N)
+            weights = []
+            for dec_val in range(2**N):
+                ind = []
+                for v in np.binary_repr(dec_val, width=N):
+                    if v == '0':
+                        ind.append(ex_one)
+                    else:
+                        ind.append(one_state)
+                # Eg: 'digital' basis => |1> = index 2, |0> = index 0, 1 = 0:2
+                # p_11010 = sum(probs[2, 2, 0:2, 2, 0:2])
+                # We sum all probabilites that correspond to measuring 11010,
+                # namely hhghg, hhrhg, hhghr, hhrhr
+                weights.append(np.sum(probs[tuple(ind)]))
+        else:
+            raise NotImplementedError(
+                "Cannot sample system with single-atom state vectors of "
+                "dimension > 3."
+                )
+        dist = np.random.multinomial(N_samples, weights)
+        return {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]}
+
     def detection_from_basis_state(self, bitstring, N_d, error_probs):
         r"""Returns the distribution of states really detected instead of
         state in ground-rydberg measurement basis.
@@ -263,6 +333,7 @@ class SimulationResults:
             (prob_bad_1, prob_bad_0) = _calculate_probabilities(self)
             probs = [int(bitstring[i]) * prob_bad_1 + (1 - int(bitstring[i]))
                      * prob_bad_0 for i in range(len(bitstring))]
+            "Probability for the initial bitstring to be good :"
             probs += [1 - sum(probs)]
             return probs
 
@@ -279,6 +350,119 @@ class SimulationResults:
                 detected_dict[_swap_bit(bitstring, i)] = bitstrings[i]
         return detected_dict
 
+    def detection_SPAM(self, spam, N_samples=1000):
+        r"""Returns the distribution of states really detected instead of
+        state in ground-rydberg measurement basis (final state).
+
+        Args:
+            bitstring (str): binary string of length the number of atoms of the
+            simulation.
+            N_samples (int): Number of times state has been detected.
+            error_probs (dict): dictionnary gathering the SPAM error
+            probabilities.
+        """
+
+        N = self._size
+        results = self.sample_final_state(meas_basis='ground-rydberg')
+
+        def _build_bitstrings_given_j(j, j_value):
+            """
+                Returns all bitstrings of size N with j_value at position j
+
+                Args:
+                    j (int) : position
+                    j_value (str) : value of bit j
+            """
+            # bitstrings left and right wrt position j
+            # left strings have length j, right have length N-1-j
+            bitstrings = []
+
+            for k in range(2**j):
+                for m in range(2**(N-1-j)):
+                    left = np.binary_repr(k, j)
+                    if j == 0:
+                        left = ""
+                    right = np.binary_repr(m, N-1-j)
+                    if j == N-1:
+                        right = ""
+                    bitstrings.append(left + str(j_value) + right)
+            return bitstrings
+
+        def _build_P_tilde(self):
+            """
+                Builds the ideal (SPAM-error-free) probability distribution
+                from the simulation results.
+                Returns P_tilde (dict): P_tilde[(i,j)] is the
+                ideal probability for atom i to be in state j
+                (no SPAM errors).
+            """
+            # number of times a bitstring is detected
+            N_tilde_bitstring = {}
+            P_tilde = {}
+
+            for i in range(2**N):
+                b = np.binary_repr(i, N)
+                if b in results:
+                    N_tilde_bitstring[b] = results[b]
+                else:
+                    N_tilde_bitstring[b] = 0
+
+            for i in range(N):
+                for j in range(0, 2):
+                    P_tilde[(i, j)] = 0
+                    for string in _build_bitstrings_given_j(i, str(j)):
+                        print(string)
+                        P_tilde[(i, j)] += N_tilde_bitstring[string]
+                    P_tilde[(i, j)] /= N_samples
+
+            return P_tilde
+
+        def _calculate_P(self, P_tilde):
+            """
+                Returns probability dict P such that P[(i,j)]
+                is the detected probability for atom i to be in state j.
+
+                Args :
+                    P_tilde (dict) : P_tilde[(i,j)] is the
+                    ideal probability for atom i to be in state j
+                    (no SPAM errors).
+            """
+            eta = spam["eta"]
+            eps = spam["epsilon"]
+            eps_p = spam["epsilon_prime"]
+            P = {(i, j): 0 for i in range(0, 2) for j in range(0, self._size)}
+            for i in range(self._size):
+                # see Sylvain's paper
+                P[(i, 0)] = eta*(1-eps) + (1-eta)*(1-eps) * \
+                    (P_tilde[(i, 0)] + eps_p*P_tilde[(i, 1)])
+                P[(i, 1)] = eta*eps + (1-eta) * (eps * P_tilde[(i, 0)] +
+                                                 (1 - eps_p + eps * eps_p) *
+                                                 P_tilde[(i, 1)])
+            return P
+
+        def _build_joint_prob(self, P):
+            """
+                Rebuilds joint probability of finding a given bitstring when
+                taking into account SPAM errors, using per-atom probability
+                dictionnary P.
+
+                Args :
+                    P (dict) : built above.
+            """
+            P_bitstring = {}
+            for i in range(2**N):
+                str = np.binary_repr(i, N)
+                P_bitstring[str] = 1
+                for k in range(N):
+                    P_bitstring[str] *= P[(k, int(str[k]))]
+            return P_bitstring
+
+        P_tilde = _build_P_tilde(self)
+        P = _calculate_P(self, P_tilde)
+        P_joint = _build_joint_prob(self, P)
+
+        return P_joint
+
     def sampling_with_detection_errors(self, sampled_state, error_probs):
         r"""
             Returns the distribution of states really detected instead of
@@ -293,9 +477,10 @@ class SimulationResults:
 
         detected_sample_dict = {}
         for bitstring in sampled_state:
-            dict_state = self.detection_from_basis_state(bitstring,
-                                                      sampled_state[bitstring],
-                                                      error_probs)
+            dict_state = self.detection_from_basis_state(
+                                                    bitstring,
+                                                    sampled_state[bitstring],
+                                                    error_probs)
             detected_sample_dict = Counter(detected_sample_dict) \
                 + Counter(dict_state)
 
