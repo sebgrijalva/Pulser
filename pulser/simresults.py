@@ -365,79 +365,49 @@ class SimulationResults:
         N = self._size
         results = self.sample_final_state(meas_basis='ground-rydberg')
 
-        def _build_bitstrings_given_j(j, j_value):
-            """
-                Returns all bitstrings of size N with j_value at position j
-
-                Args:
-                    j (int) : position
-                    j_value (str) : value of bit j
-            """
-            # bitstrings left and right wrt position j
-            # left strings have length j, right have length N-1-j
-            bitstrings = []
-
-            for k in range(2**j):
-                for m in range(2**(N-1-j)):
-                    left = np.binary_repr(k, j)
-                    if j == 0:
-                        left = ""
-                    right = np.binary_repr(m, N-1-j)
-                    if j == N-1:
-                        right = ""
-                    bitstrings.append(left + str(j_value) + right)
-            return bitstrings
-
         def _build_P_tilde(self):
             """
                 Builds the ideal (SPAM-error-free) probability distribution
                 from the simulation results.
-                Returns P_tilde (dict): P_tilde[(i,j)] is the
+                Returns P_tilde (np.array) : P_tilde[i,j] is the
                 ideal probability for atom i to be in state j
                 (no SPAM errors).
             """
-            # number of times a bitstring is detected
-            N_tilde_bitstring = {}
-            P_tilde = {}
 
+            P_tilde = np.zeros((N, 2))
+
+            # We count each time atom i is in state j for each bitstring
             for i in range(2**N):
                 b = np.binary_repr(i, N)
                 if b in results:
-                    N_tilde_bitstring[b] = results[b]
-                else:
-                    N_tilde_bitstring[b] = 0
+                    for k in range(N):
+                        P_tilde[k, int(b[k])] += results[b]
 
-            for i in range(N):
-                for j in range(0, 2):
-                    P_tilde[(i, j)] = 0
-                    for string in _build_bitstrings_given_j(i, str(j)):
-                        print(string)
-                        P_tilde[(i, j)] += N_tilde_bitstring[string]
-                    P_tilde[(i, j)] /= N_samples
+            P_tilde /= N_samples
 
             return P_tilde
 
         def _calculate_P(self, P_tilde):
             """
-                Returns probability dict P such that P[(i,j)]
+                Returns probability P (np.array) such that P[i,j]
                 is the detected probability for atom i to be in state j.
 
                 Args :
-                    P_tilde (dict) : P_tilde[(i,j)] is the
+                    P_tilde (np.array) : P_tilde[i,j] is the
                     ideal probability for atom i to be in state j
                     (no SPAM errors).
             """
             eta = spam["eta"]
             eps = spam["epsilon"]
             eps_p = spam["epsilon_prime"]
-            P = {(i, j): 0 for i in range(0, 2) for j in range(0, self._size)}
-            for i in range(self._size):
+            P = np.zeros((N, 2))
+            for i in range(N):
                 # see Sylvain's paper
-                P[(i, 0)] = eta*(1-eps) + (1-eta)*(1-eps) * \
-                    (P_tilde[(i, 0)] + eps_p*P_tilde[(i, 1)])
-                P[(i, 1)] = eta*eps + (1-eta) * (eps * P_tilde[(i, 0)] +
-                                                 (1 - eps_p + eps * eps_p) *
-                                                 P_tilde[(i, 1)])
+                P[i, 0] = eta*(1-eps) + (1-eta)*(1-eps) * \
+                    (P_tilde[i, 0] + eps_p*P_tilde[i, 1])
+                P[i, 1] = eta*eps + (1-eta) * (eps * P_tilde[i, 0] +
+                                               (1 - eps_p + eps * eps_p) *
+                                               P_tilde[i, 1])
             return P
 
         def _build_joint_prob(self, P):
@@ -447,15 +417,15 @@ class SimulationResults:
                 dictionnary P.
 
                 Args :
-                    P (dict) : built above.
+                    P (np.array) : built above.
             """
-            P_bitstring = {}
+            P_joint = {}
             for i in range(2**N):
-                str = np.binary_repr(i, N)
-                P_bitstring[str] = 1
+                b = np.binary_repr(i, N)
+                P_joint[b] = 1
                 for k in range(N):
-                    P_bitstring[str] *= P[(k, int(str[k]))]
-            return P_bitstring
+                    P_joint[b] *= P[k, int(b[k])]
+            return P_joint
 
         P_tilde = _build_P_tilde(self)
         P = _calculate_P(self, P_tilde)
