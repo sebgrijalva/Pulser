@@ -39,7 +39,7 @@ class Simulation:
             value between 0.05 and 1.0
     """
 
-    def __init__(self, sequence, sampling_rate=1.0):
+    def __init__(self, sequence, sampling_rate=1.0, interaction='ising'):
         """Initialize the Simulation with a specific pulser.Sequence."""
         if not isinstance(sequence, Sequence):
             raise TypeError("The provided sequence has to be a valid "
@@ -64,10 +64,16 @@ class Simulation:
                              "points.")
         self.sampling_rate = sampling_rate
 
+        self._interaction = interaction
+
         self._qid_index = {qid: i for i, qid in enumerate(self._qdict)}
-        self.samples = {addr: {basis: {}
-                               for basis in ['ground-rydberg', 'digital']}
-                        for addr in ['Global', 'Local']}
+
+        if self._interaction == 'ising':
+            self.samples = {addr: {basis: {}
+                                   for basis in ['ground-rydberg', 'digital']}
+                            for addr in ['Global', 'Local']}
+        elif self._interaction == 'XY':
+            self.samples = {'Global': {}, 'Local': {}}
         self.operators = deepcopy(self.samples)
 
         self._extract_samples()
@@ -88,53 +94,92 @@ class Simulation:
             samples_dict['det'][slot.ti:slot.tf] += slot.type.detuning.samples
             samples_dict['phase'][slot.ti:slot.tf] = slot.type.phase
 
-        for channel in self._seq.declared_channels:
-            addr = self._seq.declared_channels[channel].addressing
-            basis = self._seq.declared_channels[channel].basis
+        if self._interaction == 'ising':
+            for channel in self._seq.declared_channels:
+                addr = self._seq.declared_channels[channel].addressing
+                basis = self._seq.declared_channels[channel].basis
 
-            samples_dict = self.samples[addr][basis]
+                samples_dict = self.samples[addr][basis]
 
-            if addr == 'Global':
-                if not samples_dict:
-                    samples_dict = prepare_dict()
-                for slot in self._seq._schedule[channel]:
-                    if isinstance(slot.type, Pulse):
-                        write_samples(slot, samples_dict)
+                if addr == 'Global':
+                    if not samples_dict:
+                        samples_dict = prepare_dict()
+                    for slot in self._seq._schedule[channel]:
+                        if isinstance(slot.type, Pulse):
+                            write_samples(slot, samples_dict)
 
-            elif addr == 'Local':
-                for slot in self._seq._schedule[channel]:
-                    if isinstance(slot.type, Pulse):
-                        for qubit in slot.targets:  # Allow multiaddressing
-                            if qubit not in samples_dict:
-                                samples_dict[qubit] = prepare_dict()
-                            write_samples(slot, samples_dict[qubit])
+                elif addr == 'Local':
+                    for slot in self._seq._schedule[channel]:
+                        if isinstance(slot.type, Pulse):
+                            for qubit in slot.targets:  # Allow multiaddressing
+                                if qubit not in samples_dict:
+                                    samples_dict[qubit] = prepare_dict()
+                                write_samples(slot, samples_dict[qubit])
 
-            self.samples[addr][basis] = samples_dict
+                self.samples[addr][basis] = samples_dict
+        elif self._interaction == 'XY':
+            for channel in self._seq.declared_channels:
+                addr = self._seq.declared_channels[channel].addressing
+                basis = self._seq.declared_channels[channel].basis
+
+                if basis == 'digital':
+                    raise ValueError("Only Rydberg basis allowed for XY mode")
+
+                samples_dict = self.samples[addr]
+
+                if addr == 'Global':
+                    if not samples_dict:
+                        samples_dict = prepare_dict()
+                    for slot in self._seq._schedule[channel]:
+                        if isinstance(slot.type, Pulse):
+                            write_samples(slot, samples_dict)
+
+                elif addr == 'Local':
+                    for slot in self._seq._schedule[channel]:
+                        if isinstance(slot.type, Pulse):
+                            for qubit in slot.targets:  # Allow multiaddressing
+                                if qubit not in samples_dict:
+                                    samples_dict[qubit] = prepare_dict()
+                                write_samples(slot, samples_dict[qubit])
+
+                self.samples[addr] = samples_dict
 
     def _build_basis_and_op_matrices(self):
         """Determine dimension, basis and projector operators."""
-        # No samples => Empty dict entry => False
-        if (not self.samples['Global']['digital']
-                and not self.samples['Local']['digital']):
-            self.basis_name = 'ground-rydberg'
-            self.dim = 2
-            basis = ['r', 'g']
-            projectors = ['gr', 'rr', 'gg']
-        elif (not self.samples['Global']['ground-rydberg']
-                and not self.samples['Local']['ground-rydberg']):
-            self.basis_name = 'digital'
-            self.dim = 2
-            basis = ['g', 'h']
-            projectors = ['hg', 'hh', 'gg']
-        else:
-            self.basis_name = 'all'  # All three states
-            self.dim = 3
-            basis = ['r', 'g', 'h']
-            projectors = ['gr', 'hg', 'rr', 'gg', 'hh']
+        if self._interaction == 'ising':
+            # No samples => Empty dict entry => False
+            if (not self.samples['Global']['digital']
+                    and not self.samples['Local']['digital']):
+                self.basis_name = 'ground-rydberg'
+                self.dim = 2
+                basis = ['r', 'g']
+                projectors = ['gr', 'rr', 'gg']
+            elif (not self.samples['Global']['ground-rydberg']
+                    and not self.samples['Local']['ground-rydberg']):
+                self.basis_name = 'digital'
+                self.dim = 2
+                basis = ['g', 'h']
+                projectors = ['hg', 'hh', 'gg']
+            else:
+                self.basis_name = 'all'  # All three states
+                self.dim = 3
+                basis = ['r', 'g', 'h']
+                projectors = ['gr', 'hg', 'rr', 'gg', 'hh']
 
-        self.basis = {b: qutip.basis(self.dim, i) for i, b in enumerate(basis)}
-        self.op_matrix = {'I': qutip.qeye(self.dim)}
+            self.basis = {b: qutip.basis(self.dim, i)
+                          for i, b in enumerate(basis)}
+            self.op_matrix = {'I': qutip.qeye(self.dim)}
 
+        elif self._interaction == 'XY':
+            # No samples => Empty dict entry => False
+            self.basis_name = 'ryd-ryd'
+            self.dim = 2
+            basis = ['u', 'd']
+            projectors = ['du', 'ud', 'uu', 'dd']
+            self.basis = {'u': qutip.basis(self.dim, 0),
+                          'd': qutip.basis(self.dim, 1)}
+
+            self.op_matrix = {'I': qutip.qeye(self.dim), 'Z': qutip.sigmaz()}
         for proj in projectors:
             self.op_matrix['sigma_' + proj] = (
                 self.basis[proj[0]] * self.basis[proj[1]].dag()
@@ -153,6 +198,19 @@ class Simulation:
                    else self.op_matrix['I'] for j in range(self._size)]
         return qutip.tensor(op_list)
 
+    def _build_multi_operator(self, op_ids, qubit_ids):
+        """Create qutip.Qobj acting nontrivially at each of `qubit_ids` with
+        each of `op_ids` (one to one correspondence, so `op_ids` would include
+        repetitions)"""
+        if len(op_ids) != len(qubit_ids):
+            raise ValueError("Operator list and qubit list must be 1-to-1.")
+        # List of identity operators, except for op_id where requested:
+        qubit_index_list = list(map(self._qid_index.get, qubit_ids))
+        op_list = [self.op_matrix[op_ids[qubit_index_list.index(j)]]
+                   if j in qubit_index_list
+                   else self.op_matrix['I'] for j in range(self._size)]
+        return qutip.tensor(op_list)
+
     def _construct_hamiltonian(self):
         def adapt(full_array):
             """Adapt list to correspond to sampling rate"""
@@ -161,31 +219,49 @@ class Simulation:
                                   dtype=int)
             return full_array[indexes]
 
-        def make_vdw_term():
-            """Construct the Van der Waals interaction Term.
+        def make_interaction_term():
+            """Construct the interaction Term.
 
+            If the interaction is 'ising':
             For each pair of qubits, calculate the distance between them, then
             assign the local operator "sigma_rr" at each pair. The units are
             given so that the coefficient includes a 1/hbar factor.
+
+            If the interaction is 'XY':
+            For each pair of qubits, calculate the distance between them, then
+            assign the local operator "sigma_ud + sigma_du" at each pair.
+            Units are such that the coefficient includes a 1/hbar factor.
             """
-            vdw = 0
+            term = 0
             # Get every pair without duplicates
             for q1, q2 in itertools.combinations(self._qdict.keys(), r=2):
                 dist = np.linalg.norm(
                     self._qdict[q1] - self._qdict[q2])
-                U = 0.5 * self._seq._device.interaction_coeff / dist**6
-                vdw += U * self._build_operator('sigma_rr', q1, q2)
-            return vdw
+                if self._interaction == 'ising':
+                    U = 0.5 * self._seq._device.interaction_coeff / dist**6
+                    term += U * self._build_operator('sigma_rr', q1, q2)
+                elif self._interaction == 'XY':
+                    U = (self._seq._device.interaction_coeff)**(1/3) / dist**3
+                    term += U * self._build_multi_operator(
+                                        ['sigma_ud', 'sigma_du'], [q1, q2])
+            return term
 
         def build_coeffs_ops(basis, addr):
             """Build coefficients and operators for the hamiltonian QobjEvo."""
-            samples = self.samples[addr][basis]
-            operators = self.operators[addr][basis]
+
+            if self._interaction == 'ising':
+                samples = self.samples[addr][basis]
+                operators = self.operators[addr][basis]
+            elif self._interaction == 'XY':
+                samples = self.samples[addr]
+                operators = self.operators[addr]
             # Choose operator names according to addressing:
             if basis == 'ground-rydberg':
                 op_ids = ['sigma_gr', 'sigma_rr']
             elif basis == 'digital':
                 op_ids = ['sigma_hg', 'sigma_gg']
+            elif basis == 'ryd-ryd':
+                op_ids = ['sigma_du', 'Z']
 
             terms = []
             if addr == 'Global':
@@ -212,22 +288,28 @@ class Simulation:
                                     self._build_operator(op_id, q_id)
                             terms.append([operators[q_id][op_id],
                                           adapt(coeff)])
-
-            self.operators[addr][basis] = operators
+            if self._interaction == 'ising':
+                self.operators[addr][basis] = operators
+            elif self._interaction == 'XY':
+                self.operators[addr] = operators
             return terms
 
         # Time independent term:
         if self.basis_name == 'digital':
             qobj_list = []
         else:
-            # Van der Waals Interaction Terms
-            qobj_list = [make_vdw_term()] if self._size > 1 else []
+            # Add Interaction Terms
+            qobj_list = [make_interaction_term()] if self._size > 1 else []
 
         # Time dependent terms:
         for addr in self.samples:
-            for basis in self.samples[addr]:
-                if self.samples[addr][basis]:
-                    qobj_list += build_coeffs_ops(basis, addr)
+            if self._interaction == 'ising':
+                for basis in self.samples[addr]:
+                    if self.samples[addr][basis]:
+                        qobj_list += build_coeffs_ops(basis, addr)
+            elif self._interaction == 'XY':
+                if self.samples[addr]:
+                    qobj_list += build_coeffs_ops('ryd-ryd', addr)
 
         self._times = adapt(np.arange(self._tot_duration,
                                       dtype=np.double)/1000)
@@ -262,9 +344,9 @@ class Simulation:
                     raise ValueError("Incompatible shape of initial_state")
                 self._initial_state = qutip.Qobj(initial_state)
         else:
-            # by default, initial state is "ground" state of g-r basis.
-            all_ground = [self.basis['g'] for _ in range(self._size)]
-            self._initial_state = qutip.tensor(all_ground)
+            tag = 'g' if self._interaction == 'ising' else 'd'
+            self._initial_state = qutip.tensor([self.basis[tag]
+                                                for _ in range(self._size)])
 
         result = qutip.sesolve(self._hamiltonian,
                                self._initial_state,

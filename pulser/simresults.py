@@ -42,13 +42,13 @@ class SimulationResults:
         self._states = run_output
         self._dim = dim
         self._size = size
-        if basis_name not in {'ground-rydberg', 'digital', 'all'}:
+        if basis_name not in {'ground-rydberg', 'digital', 'all', 'ryd-ryd'}:
             raise ValueError(
                 "`basis_name` must be 'ground-rydberg', 'digital' or 'all'."
                 )
         self._basis_name = basis_name
         if meas_basis:
-            if meas_basis not in {'ground-rydberg', 'digital'}:
+            if meas_basis not in {'ground-rydberg', 'digital', 'ryd-ryd'}:
                 raise ValueError(
                     "`meas_basis` must be 'ground-rydberg' or 'digital'."
                     )
