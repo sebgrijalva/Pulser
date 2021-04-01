@@ -387,9 +387,14 @@ class SimulationResults:
 
         def _calculate_P(self, P_tilde):
             """
+<<<<<<< HEAD
                 Returns the measured probability P (np.array)
                 (taking into account SPAM errors) such that P[i,j]
                 is the measured probability for atom i to be in state j.
+=======
+                Returns probability P (np.array) such that P[i,j]
+                is the detected probability for atom i to be in state j.
+>>>>>>> 5acac8023b6a47135edbb53e7999c1f0de3fcea8
 
                 Args :
                     P_tilde (np.array) : P_tilde[i,j] is the
@@ -401,7 +406,11 @@ class SimulationResults:
             eps_p = spam["epsilon_prime"]
             P = np.zeros((N, 2))
             for i in range(N):
+<<<<<<< HEAD
                 # see Sylvain's paper for the formula
+=======
+                # see Sylvain's paper
+>>>>>>> 5acac8023b6a47135edbb53e7999c1f0de3fcea8
                 P[i, 0] = eta*(1-eps) + (1-eta)*(1-eps) * \
                     (P_tilde[i, 0] + eps_p*P_tilde[i, 1])
                 P[i, 1] = eta*eps + (1-eta) * (eps * P_tilde[i, 0] +
