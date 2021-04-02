@@ -39,7 +39,8 @@ class Simulation:
             value between 0.05 and 1.0
     """
 
-    def __init__(self, sequence, sampling_rate=1.0):
+    def __init__(self, sequence, sampling_rate=1.0, noise={"Doppler": False},
+                 damping={"Emission": False}):
         """Initialize the Simulation with a specific pulser.Sequence."""
         if not isinstance(sequence, Sequence):
             raise TypeError("The provided sequence has to be a valid "
@@ -50,6 +51,8 @@ class Simulation:
             raise ValueError("No instructions given for the channels in the "
                              "sequence.")
         self._seq = sequence
+        self._noise = noise
+        self._damping = damping
         self._qdict = self._seq.qubit_info
         self._size = len(self._qdict)
         self._tot_duration = max(
@@ -85,7 +88,12 @@ class Simulation:
 
         def write_samples(slot, samples_dict):
             samples_dict['amp'][slot.ti:slot.tf] += slot.type.amplitude.samples
-            samples_dict['det'][slot.ti:slot.tf] += slot.type.detuning.samples
+            epsilon = 0
+            if(self._noise["Doppler"]):
+                # sigma = k_eff \Delta v : See Sylvain's paper
+                epsilon = np.random.normal(0, 2*np.pi*0.12)
+            samples_dict['det'][slot.ti:slot.tf] += \
+                slot.type.detuning.samples * (1+epsilon)
             samples_dict['phase'][slot.ti:slot.tf] = slot.type.phase
 
         for channel in self._seq.declared_channels:
@@ -113,24 +121,31 @@ class Simulation:
 
     def _build_basis_and_op_matrices(self):
         """Determine dimension, basis and projector operators."""
-        # No samples => Empty dict entry => False
-        if (not self.samples['Global']['digital']
-                and not self.samples['Local']['digital']):
-            self.basis_name = 'ground-rydberg'
-            self.dim = 2
-            basis = ['r', 'g']
-            projectors = ['gr', 'rr', 'gg']
-        elif (not self.samples['Global']['ground-rydberg']
-                and not self.samples['Local']['ground-rydberg']):
-            self.basis_name = 'digital'
-            self.dim = 2
-            basis = ['g', 'h']
-            projectors = ['hg', 'hh', 'gg']
-        else:
+        # This case when computing spontaneous emission errors
+        if self._damping["Emission"]:
             self.basis_name = 'all'  # All three states
             self.dim = 3
             basis = ['r', 'g', 'h']
-            projectors = ['gr', 'hg', 'rr', 'gg', 'hh']
+            projectors = ['gr', 'hg', 'rr', 'gg', 'hh', 'hr']
+        else:
+            # No samples => Empty dict entry => False
+            if (not self.samples['Global']['digital']
+                    and not self.samples['Local']['digital']):
+                self.basis_name = 'ground-rydberg'
+                self.dim = 2
+                basis = ['r', 'g']
+                projectors = ['gr', 'rr', 'gg']
+            elif (not self.samples['Global']['ground-rydberg']
+                    and not self.samples['Local']['ground-rydberg']):
+                self.basis_name = 'digital'
+                self.dim = 2
+                basis = ['g', 'h']
+                projectors = ['hg', 'hh', 'gg']
+            else:
+                self.basis_name = 'all'  # All three states
+                self.dim = 3
+                basis = ['r', 'g', 'h']
+                projectors = ['gr', 'hg', 'rr', 'gg', 'hh', 'hr']
 
         self.basis = {b: qutip.basis(self.dim, i) for i, b in enumerate(basis)}
         self.op_matrix = {'I': qutip.qeye(self.dim)}
@@ -177,6 +192,21 @@ class Simulation:
                 vdw += U * self._build_operator('sigma_rr', q1, q2)
             return vdw
 
+        def make_spontaneous_emission_term(self):
+            H_emi = 0
+            omega_r = 2 * np.pi * 30
+            omega_b = 2 * np.pi * 30
+            big_delta = 2 * np.pi * 740
+            # detuning
+            delta = 0 * 2 * np.pi
+            for q in self._qdict.keys():
+                H_emi += (omega_r / 2) * self._build_operator('sigma_hg',
+                                                              q).dag()
+                H_emi += (omega_b / 2) * self._build_operator('sigma_hr', q)
+                H_emi -= (big_delta / 2) * self._build_operator('sigma_hh', q)
+                H_emi -= (delta / 2) * self._build_operator('sigma_rr', q)
+            return H_emi
+
         def build_coeffs_ops(basis, addr):
             """Build coefficients and operators for the hamiltonian QobjEvo."""
             samples = self.samples[addr][basis]
@@ -221,13 +251,17 @@ class Simulation:
             qobj_list = []
         else:
             # Van der Waals Interaction Terms
-            qobj_list = [make_vdw_term()]
+            qobj_list = [make_vdw_term()] if self._size > 1 else []
 
         # Time dependent terms:
         for addr in self.samples:
             for basis in self.samples[addr]:
                 if self.samples[addr][basis]:
                     qobj_list += build_coeffs_ops(basis, addr)
+
+        # Spontaneous emission hamiltonian
+        if self._damping["Emission"]:
+            qobj_list += [make_spontaneous_emission_term(self)]
 
         self._times = adapt(np.arange(self._tot_duration,
                                       dtype=np.double)/1000)
@@ -270,6 +304,17 @@ class Simulation:
         Returns:
             SimulationResults: Object containing the time evolution results.
         """
+
+        def _build_lindblad_term(self):
+            L = []
+            Gamma_r = 2*np.pi * 0.05
+            Gamma_g = 2*np.pi * 0.05
+            for q in self._qdict.keys():
+                C_1 = np.sqrt(Gamma_r) * self._build_operator('sigma_hr', q)
+                C_2 = np.sqrt(Gamma_g) * self._build_operator('sigma_hg', q)
+                L += [C_1, C_2]
+            return L
+
         if initial_state is not None:
             if isinstance(initial_state, qutip.Qobj):
                 if initial_state.shape != (self.dim**self._size, 1):
@@ -284,9 +329,16 @@ class Simulation:
             all_ground = [self.basis['g'] for _ in range(self._size)]
             self._initial_state = qutip.tensor(all_ground)
 
-        result = qutip.sesolve(self._hamiltonian,
+        L = []
+
+        if self._damping["Emission"]:
+            L = _build_lindblad_term(self)
+
+        # qutip uses sesolve if c_ops = []
+        result = qutip.mesolve(self._hamiltonian,
                                self._initial_state,
                                self._times,
+                               c_ops=L,
                                progress_bar=progress_bar,
                                options=qutip.Options(max_step=5,
                                                      **options)

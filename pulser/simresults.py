@@ -180,6 +180,11 @@ class SimulationResults:
         N = self._size
         self.N_samples = N_samples
         probs = np.abs(self._states[-1].full())**2
+
+        # Adapter les SPAM aux matrices densité !
+
+        print(sum(sum(probs)))
+
         if self._dim == 2:
             if meas_basis == self._basis_name:
                 # State vector ordered with r first for 'ground_rydberg'
@@ -198,7 +203,7 @@ class SimulationResults:
                 one_state = 2       # 1 = |h>
                 ex_one = slice(0, 2)
 
-            probs = probs.reshape([3]*N)
+            probs = probs.reshape(3, N)
             weights = []
             for dec_val in range(2**N):
                 ind = []
@@ -367,7 +372,7 @@ class SimulationResults:
             """
                 Builds the ideal (SPAM-error-free) probability distribution
                 from the simulation results.
-                Returns P_tilde (np.array) : P_tilde[i,j] is the
+                Returns P_tilde (np.array) : P_tilde[i, s] is the
                 ideal probability for atom i to be in state j
                 (no SPAM errors).
             """
@@ -387,17 +392,12 @@ class SimulationResults:
 
         def _calculate_P(self, P_tilde):
             """
-<<<<<<< HEAD
                 Returns the measured probability P (np.array)
-                (taking into account SPAM errors) such that P[i,j]
-                is the measured probability for atom i to be in state j.
-=======
-                Returns probability P (np.array) such that P[i,j]
-                is the detected probability for atom i to be in state j.
->>>>>>> 5acac8023b6a47135edbb53e7999c1f0de3fcea8
+                (taking into account SPAM errors) such that P[i, s]
+                is the measured probability for atom i to be in state s.
 
                 Args :
-                    P_tilde (np.array) : P_tilde[i,j] is the
+                    P_tilde (np.array) : P_tilde[i, s] is the
                     ideal probability for atom i to be in state j
                     (no SPAM errors).
             """
@@ -406,11 +406,7 @@ class SimulationResults:
             eps_p = spam["epsilon_prime"]
             P = np.zeros((N, 2))
             for i in range(N):
-<<<<<<< HEAD
                 # see Sylvain's paper for the formula
-=======
-                # see Sylvain's paper
->>>>>>> 5acac8023b6a47135edbb53e7999c1f0de3fcea8
                 P[i, 0] = eta*(1-eps) + (1-eta)*(1-eps) * \
                     (P_tilde[i, 0] + eps_p*P_tilde[i, 1])
                 P[i, 1] = eta*eps + (1-eta) * (eps * P_tilde[i, 0] +
