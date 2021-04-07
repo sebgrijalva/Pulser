@@ -19,11 +19,7 @@ import qutip
 
 from pulser import Sequence, Pulse, Register, Simulation
 from pulser.devices import Chadoq2
-<<<<<<< HEAD
-from pulser.waveforms import BlackmanWaveform, RampWaveform
-=======
-from pulser.waveforms import BlackmanWaveform, ConstantWaveform
->>>>>>> master
+from pulser.waveforms import BlackmanWaveform, RampWaveform, ConstantWaveform
 
 q_dict = {"control1": np.array([-4., 0.]),
           "target": np.array([0., 4.]),
@@ -76,6 +72,7 @@ def test_initialization_and_construction_of_hamiltonian():
     assert sim._size == len(seq.qubit_info)
     assert sim._tot_duration == duration * d
     assert sim._qid_index == {"control1": 0, "target": 1, "control2": 2}
+
     with pytest.raises(ValueError, match='too small, less than'):
         Simulation(seq, sampling_rate=0.0001)
     with pytest.raises(ValueError, match='positive and not larger'):
@@ -199,7 +196,6 @@ def test_empty_sequences():
         Simulation(seq)
 
 
-<<<<<<< HEAD
 def test_get_hamiltonian():
     simple_reg = Register.from_coordinates([[10, 0], [0, 0]], prefix='atom')
     detun = 1.
@@ -216,7 +212,8 @@ def test_get_hamiltonian():
     # Constant detuning, so |rr><rr| term is C_6/r^6 - 2*detuning for any time
     simple_ham = simple_sim.get_hamiltonian(143)
     assert (simple_ham[0, 0] == Chadoq2.interaction_coeff / 10**6 - 2 * detun)
-=======
+
+
 def test_single_atom_simulation():
     one_reg = Register.from_coordinates([(0, 0)], 'atom')
     one_seq = Sequence(one_reg, Chadoq2)
@@ -225,7 +222,6 @@ def test_single_atom_simulation():
     one_sim = Simulation(seq)
     one_res = one_sim.run()
     assert(one_res._size == one_sim._size)
->>>>>>> master
 
 
 def test_run():
