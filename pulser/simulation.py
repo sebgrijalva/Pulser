@@ -87,13 +87,14 @@ class Simulation:
                     'phase': np.zeros(self._tot_duration)}
 
         def write_samples(slot, samples_dict):
-            samples_dict['amp'][slot.ti:slot.tf] += slot.type.amplitude.samples
             epsilon = 0
+            samples_dict['amp'][slot.ti:slot.tf] += slot.type.amplitude.samples
             if(self._noise["Doppler"]):
                 # sigma = k_eff \Delta v : See Sylvain's paper
-                epsilon = np.random.normal(0, 2*np.pi*0.12)
-            samples_dict['det'][slot.ti:slot.tf] += \
-                slot.type.detuning.samples * (1+epsilon)
+                for i in range(slot.ti, slot.tf):
+                    epsilon = np.random.normal(0, 2*np.pi*0.12)
+                    samples_dict['det'][i] += \
+                        slot.type.detuning.samples[i-slot.ti] * (1+epsilon)
             samples_dict['phase'][slot.ti:slot.tf] = slot.type.phase
 
         for channel in self._seq.declared_channels:
@@ -194,11 +195,11 @@ class Simulation:
 
         def make_spontaneous_emission_term(self):
             H_emi = 0
-            omega_r = 2 * np.pi * 30
-            omega_b = 2 * np.pi * 30
+            omega_r = 2 * np.pi * 0.1
+            omega_b = 2 * np.pi * 0.1
             big_delta = 2 * np.pi * 740
             # detuning
-            delta = 0 * 2 * np.pi
+            delta = 2 * np.pi * 100
             for q in self._qdict.keys():
                 H_emi += (omega_r / 2) * self._build_operator('sigma_hg',
                                                               q).dag()
@@ -307,8 +308,8 @@ class Simulation:
 
         def _build_lindblad_term(self):
             L = []
-            Gamma_r = 2*np.pi * 0.05
-            Gamma_g = 2*np.pi * 0.05
+            Gamma_r = 4 * np.pi
+            Gamma_g = 2 * np.pi
             for q in self._qdict.keys():
                 C_1 = np.sqrt(Gamma_r) * self._build_operator('sigma_hr', q)
                 C_2 = np.sqrt(Gamma_g) * self._build_operator('sigma_hg', q)
