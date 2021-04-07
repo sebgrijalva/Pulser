@@ -188,11 +188,7 @@ class SimulationResults:
                                                                 self._dim*N)]))
         # Case of a ket final state
         else:
-<<<<<<< HEAD
             probs = np.abs(final_state.full())**2
-=======
-            probs = np.abs(final_state)**2
->>>>>>> 03e55f0f064e5bf7dfe810f3659d5398239d087a
 
         if self._dim == 2:
             if meas_basis == self._basis_name:
