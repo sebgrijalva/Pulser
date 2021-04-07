@@ -14,7 +14,6 @@
 
 import qutip
 import numpy as np
-from collections import Counter
 
 
 class SimulationResults:
@@ -138,7 +137,7 @@ class SimulationResults:
 
         return [qutip.expect(qobj, self._states) for qobj in qobj_list]
 
-    def sample_final_state(self, meas_basis=None, N_samples=1000):
+    def sample_state(self, t, meas_basis=None, N_samples=1000):
         r"""Returns the result of multiple measurements in a given basis.
 
         The enconding of the results depends on the meaurement basis. Namely:
@@ -179,11 +178,17 @@ class SimulationResults:
 
         N = self._size
         self.N_samples = N_samples
-        probs = np.abs(self._states[-1].full())**2
 
-        # Adapter les SPAM aux matrices densité !
+        final_state = self._states[t]
 
-        print(sum(sum(probs)))
+        # Case of a density matrix
+        # Don't take the modulus square in this case !
+        if final_state.type != "ket":
+            probs = np.abs(np.array([final_state[i, i] for i in range(
+                                                                self._dim*N)]))
+        # Case of a ket final state
+        else:
+            probs = np.abs(final_state)**2
 
         if self._dim == 2:
             if meas_basis == self._basis_name:
@@ -203,6 +208,7 @@ class SimulationResults:
                 one_state = 2       # 1 = |h>
                 ex_one = slice(0, 2)
 
+            # verified : (3, N)
             probs = probs.reshape(3, N)
             weights = []
             for dec_val in range(2**N):
@@ -225,8 +231,8 @@ class SimulationResults:
         dist = np.random.multinomial(N_samples, weights)
         return {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]}
 
-    def sample_state(self, t, meas_basis=None, N_samples=1000):
-        r"""Same as sample_final_state, but at a given time t.
+    def sample_final_state(self, meas_basis=None, N_samples=1000):
+        r"""Same as sample_state, but at t=-1.
 
         Keyword Args:
             meas_basis (str, default=None): 'ground-rydberg' or 'digital'. If
@@ -238,125 +244,13 @@ class SimulationResults:
             ValueError: If trying to sample without a defined 'meas_basis' in
                 the arguments when the original sequence is not measured.
         """
-        if meas_basis is None:
-            if self._meas_basis is None:
-                raise ValueError(
-                    "Can't accept an undefined measurement basis because the "
-                    "original sequence has no measurement."
-                    )
-            meas_basis = self._meas_basis
+        return self.sample_state(-1, meas_basis, N_samples)
 
-        if meas_basis not in {'ground-rydberg', 'digital'}:
-            raise ValueError(
-                "'meas_basis' can only be 'ground-rydberg' or 'digital'."
-                )
-
-        N = self._size
-        self.N_samples = N_samples
-        probs = np.abs(self._states[t].full())**2
-        if self._dim == 2:
-            if meas_basis == self._basis_name:
-                # State vector ordered with r first for 'ground_rydberg'
-                # e.g. N=2: [rr, rg, gr, gg] -> [11, 10, 01, 00]
-                # Invert the order ->  [00, 01, 10, 11] correspondence
-                weights = probs if meas_basis == 'digital' else probs[::-1]
-            else:
-                return {'0' * N: int(N_samples)}
-            weights = weights.flatten()
-
-        elif self._dim == 3:
-            if meas_basis == 'ground-rydberg':
-                one_state = 0       # 1 = |r>
-                ex_one = slice(1, 3)
-            elif meas_basis == 'digital':
-                one_state = 2       # 1 = |h>
-                ex_one = slice(0, 2)
-
-            probs = probs.reshape([3]*N)
-            weights = []
-            for dec_val in range(2**N):
-                ind = []
-                for v in np.binary_repr(dec_val, width=N):
-                    if v == '0':
-                        ind.append(ex_one)
-                    else:
-                        ind.append(one_state)
-                # Eg: 'digital' basis => |1> = index 2, |0> = index 0, 1 = 0:2
-                # p_11010 = sum(probs[2, 2, 0:2, 2, 0:2])
-                # We sum all probabilites that correspond to measuring 11010,
-                # namely hhghg, hhrhg, hhghr, hhrhr
-                weights.append(np.sum(probs[tuple(ind)]))
-        else:
-            raise NotImplementedError(
-                "Cannot sample system with single-atom state vectors of "
-                "dimension > 3."
-                )
-        dist = np.random.multinomial(N_samples, weights)
-        return {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]}
-
-    def detection_from_basis_state(self, bitstring, N_d, error_probs):
-        r"""Returns the distribution of states really detected instead of
-        state in ground-rydberg measurement basis.
-
-        Args:
-            bitstring (str): binary string of length the number of atoms of the
-            simulation.
-            N_samples (int): Number of times state has been detected.
-            error_probs (dict): dictionnary gathering the SPAM error
-            probabilities.
-        """
-
-        def _calculate_probabilities(self):
-            """
-                Returns the probabilities for an individual atom to be wrongly
-                measured as a 0 instead of a 1 (vice-versa) using errors in
-                measurements of other atoms error_probs[epsilon] = probability
-                of a bad 0, epsilon_prime for a bad 1
-            """
-            prob_bad_1 = error_probs['epsilon_prime'] \
-                * (1-error_probs['epsilon']) ** bitstring.count('0') \
-                * (1-error_probs['epsilon_prime']) ** (bitstring.count('1')-1)
-            prob_bad_0 = error_probs['epsilon'] * (1 - error_probs['epsilon'])\
-                ** (bitstring.count('0')-1)*(1-error_probs['epsilon_prime'])\
-                ** bitstring.count('1')
-
-            return (prob_bad_1, prob_bad_0)
-
-        def _swap_bit(bitstring, i):
-            """
-                Swaps bit i for its conjugate in a given bitstring
-            """
-            return bitstring[:i] + str(1 - int(bitstring[i])) \
-                                 + bitstring[i + 1:]
-
-        def _build_proba_list(self):
-            """
-                Returns probability list probs, where
-                probs[i] is the probability for atom i to have a wrong
-                measurement
-            """
-            (prob_bad_1, prob_bad_0) = _calculate_probabilities(self)
-            probs = [int(bitstring[i]) * prob_bad_1 + (1 - int(bitstring[i]))
-                     * prob_bad_0 for i in range(len(bitstring))]
-            "Probability for the initial bitstring to be good :"
-            probs += [1 - sum(probs)]
-            return probs
-
-        probs = _build_proba_list(self)
-
-        bitstrings = np.random.multinomial(N_d, probs)
-        "Last bitstring is the unchanged bitstring"
-        detected_dict = {bitstring: bitstrings[-1]}
-
-        for i in range(len(bitstring)):
-            if bitstrings[i]:
-                "Each state where atom i has changed states is counted"
-                "bitstrings[i] times after the error simulation"
-                detected_dict[_swap_bit(bitstring, i)] = bitstrings[i]
-        return detected_dict
-
-    def detection_SPAM(self, spam, N_samples=1000):
-        r"""Returns the distribution of states really detected instead of
+    def detection_SPAM(self, spam={"eta": 0.005, "epsilon": 0.01,
+                                   "epsilon_prime": 0.05}, N_samples=1000,
+                       meas_basis='ground-rydberg'):
+        r"""Returns the probability distribution
+        of states really detected instead of
         state in ground-rydberg measurement basis (final state).
 
         Args:
@@ -366,7 +260,7 @@ class SimulationResults:
         """
 
         N = self._size
-        results = self.sample_final_state(meas_basis='ground-rydberg')
+        results = self.sample_final_state(meas_basis)
 
         def _build_P_tilde(self):
             """
@@ -436,26 +330,3 @@ class SimulationResults:
         P_joint = _build_joint_prob(self, P)
 
         return P_joint
-
-    def sampling_with_detection_errors(self, sampled_state, error_probs):
-        r"""
-            Returns the distribution of states really detected instead of
-            sampled_state.
-
-            Args:
-                sampled_state (dict): dictionnary of detected states as binary
-                string with their detection number.
-                error_probs (dict): dictionnary gathering the SPAM error
-                probabilities.
-        """
-
-        detected_sample_dict = {}
-        for bitstring in sampled_state:
-            dict_state = self.detection_from_basis_state(
-                                                    bitstring,
-                                                    sampled_state[bitstring],
-                                                    error_probs)
-            detected_sample_dict = Counter(detected_sample_dict) \
-                + Counter(dict_state)
-
-        return detected_sample_dict
