@@ -87,14 +87,14 @@ class Simulation:
                     'phase': np.zeros(self._tot_duration)}
 
         def write_samples(slot, samples_dict):
-            epsilon = 0
             samples_dict['amp'][slot.ti:slot.tf] += slot.type.amplitude.samples
+            noise = 1
             if(self._noise["Doppler"]):
                 # sigma = k_eff \Delta v : See Sylvain's paper
-                for i in range(slot.ti, slot.tf):
-                    epsilon = np.random.normal(0, 2*np.pi*0.12)
-                    samples_dict['det'][i] += \
-                        slot.type.detuning.samples[i-slot.ti] * (1+epsilon)
+                noise = 1 + np.random.normal(
+                            0, 2*np.pi*0.12, slot.tf - slot.ti)
+            samples_dict['det'][slot.ti:slot.tf] += \
+                slot.type.detuning.samples * noise
             samples_dict['phase'][slot.ti:slot.tf] = slot.type.phase
 
         for channel in self._seq.declared_channels:

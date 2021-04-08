@@ -184,9 +184,7 @@ class SimulationResults:
         # Case of a density matrix
         # Don't take the modulus square in this case !
         if final_state.type != "ket":
-            probs = np.abs(np.array([final_state[i, i] for i in range(
-                                                                self._dim*N)]))
-        # Case of a ket final state
+            probs = np.abs(final_state.diag())
         else:
             probs = np.abs(final_state.full())**2
 
@@ -267,21 +265,15 @@ class SimulationResults:
                 Builds the ideal (SPAM-error-free) probability distribution
                 from the simulation results.
                 Returns P_tilde (np.array) : P_tilde[i, s] is the
-                ideal probability for atom i to be in state j
+                ideal probability for atom i to be in state s
                 (no SPAM errors).
             """
-
             P_tilde = np.zeros((N, 2))
-
-            # We count each time atom i is in state j for each bitstring
-            for i in range(2**N):
-                b = np.binary_repr(i, N)
-                if b in results:
-                    for k in range(N):
-                        P_tilde[k, int(b[k])] += results[b]
-
+            # We count each time atom i is in state s for each bitstring
+            for bitstring in results:
+                for i, bit in enumerate(bitstring):
+                    P_tilde[i, int(bit)] += results[bitstring]
             P_tilde /= N_samples
-
             return P_tilde
 
         def _calculate_P(self, P_tilde):
@@ -292,7 +284,7 @@ class SimulationResults:
 
                 Args :
                     P_tilde (np.array) : P_tilde[i, s] is the
-                    ideal probability for atom i to be in state j
+                    ideal probability for atom i to be in state s
                     (no SPAM errors).
             """
             eta = spam["eta"]
@@ -317,12 +309,10 @@ class SimulationResults:
                 Args :
                     P (np.array) : built above.
             """
-            P_joint = {}
-            for i in range(2**N):
-                b = np.binary_repr(i, N)
-                P_joint[b] = 1
-                for k in range(N):
-                    P_joint[b] *= P[k, int(b[k])]
+            bitstrings = [np.binary_repr(i, N) for i in range(2**N)]
+            P_joint = {bitstring: np.prod(
+                       [P[k, int(bit)] for k, bit in enumerate(bitstring)])
+                       for bitstring in bitstrings}
             return P_joint
 
         P_tilde = _build_P_tilde(self)
