@@ -13,11 +13,10 @@
 # limitations under the License.
 
 import qutip
-import numpy as np
 
 
 class SimulationResults:
-    """Results of a simulation run of a pulse sequence.
+    """Results of a simulation run of a pulse sequence. Abstract class.
 
     Contains methods for studying the states and extracting useful information
     from them.
@@ -54,64 +53,6 @@ class SimulationResults:
                     )
         self._meas_basis = meas_basis
 
-    @property
-    def states(self):
-        """List of ``qutip.Qobj`` for each state in the simulation."""
-        return list(self._states)
-
-    def get_final_state(self, reduce_to_basis=None, ignore_global_phase=True,
-                        tol=1e-6, normalize=True):
-        """Get the final state of the simulation.
-
-        Keyword Args:
-            reduce_to_basis (str, default=None): Reduces the full state vector
-                to the given basis ("ground-rydberg" or "digital"), if the
-                population of the states to be ignored is negligible.
-            ignore_global_phase (bool, default=True): If True, changes the
-                final state's global phase such that the largest term (in
-                absolute value) is real.
-            tol (float, default=1e-6): Maximum allowed population of each
-                eliminated state.
-            normalize (bool, default=True): Whether to normalize the reduced
-                state.
-
-        Returns:
-            qutip.Qobj: The resulting final state.
-
-        Raises:
-            TypeError: If trying to reduce to a basis that would eliminate
-                states with significant occupation probabilites.
-        """
-        final_state = self._states[-1].copy()
-        if ignore_global_phase:
-            full = final_state.full()
-            global_ph = float(np.angle(full[np.argmax(np.abs(full))]))
-            final_state *= np.exp(-1j * global_ph)
-        if self._dim != 3:
-            if reduce_to_basis not in [None, self._basis_name]:
-                raise TypeError(f"Can't reduce a system in {self._basis_name}"
-                                + f" to the {reduce_to_basis} basis.")
-        elif reduce_to_basis is not None:
-            if reduce_to_basis == "ground-rydberg":
-                ex_state = "2"
-            elif reduce_to_basis == "digital":
-                ex_state = "0"
-            else:
-                raise ValueError("'reduce_to_basis' must be 'ground-rydberg' "
-                                 + f"or 'digital', not '{reduce_to_basis}'.")
-            ex_inds = [i for i in range(3**self._size) if ex_state in
-                       np.base_repr(i, base=3).zfill(self._size)]
-            ex_probs = np.abs(final_state.extract_states(ex_inds).full()) ** 2
-            if not np.all(np.isclose(ex_probs, 0, atol=tol)):
-                raise TypeError(
-                    "Can't reduce to chosen basis because the population of a "
-                    "state to eliminate is above the allowed tolerance."
-                    )
-            final_state = final_state.eliminate_states(
-                                                ex_inds, normalize=normalize)
-
-        return final_state.tidyup()
-
     def expect(self, obs_list):
         """Calculates the expectation value of a list of observables.
 
@@ -121,23 +62,9 @@ class SimulationResults:
                 calculated. If necessary, each member will be transformed into
                 a qutip.Qobj instance.
         """
-        if not isinstance(obs_list, (list, np.ndarray)):
-            raise TypeError("`obs_list` must be a list of operators")
+        pass
 
-        qobj_list = []
-        for obs in obs_list:
-            if not (isinstance(obs, np.ndarray)
-                    or isinstance(obs, qutip.Qobj)):
-                raise TypeError("Incompatible type of observable.")
-            if obs.shape != (self._dim**self._size, self._dim**self._size):
-                raise ValueError("Incompatible shape of observable.")
-            # Transfrom to qutip.Qobj and take dims from state
-            dim_list = [self._states[0].dims[0], self._states[0].dims[0]]
-            qobj_list.append(qutip.Qobj(obs, dims=dim_list))
-
-        return [qutip.expect(qobj, self._states) for qobj in qobj_list]
-
-    def sample_state(self, t, meas_basis=None, N_samples=1000):
+    def sample_state(self, t=-1, meas_basis='ground-rydberg', N_samples=1000):
         r"""Returns the result of multiple measurements in a given basis.
 
         The enconding of the results depends on the meaurement basis. Namely:
@@ -163,160 +90,22 @@ class SimulationResults:
             ValueError: If trying to sample without a defined 'meas_basis' in
                 the arguments when the original sequence is not measured.
         """
-        if meas_basis is None:
-            if self._meas_basis is None:
-                raise ValueError(
-                    "Can't accept an undefined measurement basis because the "
-                    "original sequence has no measurement."
-                    )
-            meas_basis = self._meas_basis
+        pass
 
-        if meas_basis not in {'ground-rydberg', 'digital'}:
-            raise ValueError(
-                "'meas_basis' can only be 'ground-rydberg' or 'digital'."
-                )
+    def _build_basis_and_op_matrices(self):
+        """Determine dimension, basis and projector operators, in 0 and 1
+        notation depending on the measurement basis"""
+        if (self._meas_basis == "ground-rydberg"):
+            basis = ['r', 'g']
+            projectors = ['gr', 'rr', 'gg']
+        elif (self._meas_basis == "digital"):
+            basis = ['g', 'h']
+            projectors = ['hg', 'hh', 'gg']
+        self.basis = {
+                    'i': qutip.basis(self.dim, i) for i, b in enumerate(basis)}
+        self.op_matrix = {'I': qutip.qeye(self.dim)}
 
-        N = self._size
-        self.N_samples = N_samples
-
-        final_state = self._states[t]
-
-        # Case of a density matrix
-        # Don't take the modulus square in this case !
-        if final_state.type != "ket":
-            probs = np.abs(final_state.diag())
-        else:
-            probs = np.abs(final_state.full())**2
-
-        if self._dim == 2:
-            if meas_basis == self._basis_name:
-                # State vector ordered with r first for 'ground_rydberg'
-                # e.g. N=2: [rr, rg, gr, gg] -> [11, 10, 01, 00]
-                # Invert the order ->  [00, 01, 10, 11] correspondence
-                weights = probs if meas_basis == 'digital' else probs[::-1]
-            else:
-                return {'0' * N: int(N_samples)}
-            weights = weights.flatten()
-
-        elif self._dim == 3:
-            if meas_basis == 'ground-rydberg':
-                one_state = 0       # 1 = |r>
-                ex_one = slice(1, 3)
-            elif meas_basis == 'digital':
-                one_state = 2       # 1 = |h>
-                ex_one = slice(0, 2)
-
-            # verified : (3, N)
-            probs = probs.reshape(3, N)
-            weights = []
-            for dec_val in range(2**N):
-                ind = []
-                for v in np.binary_repr(dec_val, width=N):
-                    if v == '0':
-                        ind.append(ex_one)
-                    else:
-                        ind.append(one_state)
-                # Eg: 'digital' basis => |1> = index 2, |0> = index 0, 1 = 0:2
-                # p_11010 = sum(probs[2, 2, 0:2, 2, 0:2])
-                # We sum all probabilites that correspond to measuring 11010,
-                # namely hhghg, hhrhg, hhghr, hhrhr
-                weights.append(np.sum(probs[tuple(ind)]))
-        else:
-            raise NotImplementedError(
-                "Cannot sample system with single-atom state vectors of "
-                "dimension > 3."
-                )
-        dist = np.random.multinomial(N_samples, weights)
-        return {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]}
-
-    def sample_final_state(self, meas_basis=None, N_samples=1000):
-        r"""Same as sample_state, but at t=-1.
-
-        Keyword Args:
-            meas_basis (str, default=None): 'ground-rydberg' or 'digital'. If
-                left as None, uses the measurement basis defined in the
-                original sequence.
-            N_samples (int, default=1000): Number of samples to take.
-
-        Raises:
-            ValueError: If trying to sample without a defined 'meas_basis' in
-                the arguments when the original sequence is not measured.
-        """
-        return self.sample_state(-1, meas_basis, N_samples)
-
-    def detection_SPAM(self, spam={"eta": 0.005, "epsilon": 0.01,
-                                   "epsilon_prime": 0.05}, N_samples=1000,
-                       meas_basis='ground-rydberg'):
-        r"""Returns the probability distribution
-        of states really detected instead of
-        state in ground-rydberg measurement basis (final state).
-
-        Args:
-            N_samples (int): Number of times state has been detected.
-            spam (dict): dictionnary gathering the SPAM error
-            probabilities.
-        """
-
-        N = self._size
-        results = self.sample_final_state(meas_basis)
-
-        def _build_P_tilde(self):
-            """
-                Builds the ideal (SPAM-error-free) probability distribution
-                from the simulation results.
-                Returns P_tilde (np.array) : P_tilde[i, s] is the
-                ideal probability for atom i to be in state s
-                (no SPAM errors).
-            """
-            P_tilde = np.zeros((N, 2))
-            # We count each time atom i is in state s for each bitstring
-            for bitstring in results:
-                for i, bit in enumerate(bitstring):
-                    P_tilde[i, int(bit)] += results[bitstring]
-            P_tilde /= N_samples
-            return P_tilde
-
-        def _calculate_P(self, P_tilde):
-            """
-                Returns the measured probability P (np.array)
-                (taking into account SPAM errors) such that P[i, s]
-                is the measured probability for atom i to be in state s.
-
-                Args :
-                    P_tilde (np.array) : P_tilde[i, s] is the
-                    ideal probability for atom i to be in state s
-                    (no SPAM errors).
-            """
-            eta = spam["eta"]
-            eps = spam["epsilon"]
-            eps_p = spam["epsilon_prime"]
-            P = np.zeros((N, 2))
-            for i in range(N):
-                # see Sylvain's paper for the formula
-                P[i, 0] = eta*(1-eps) + (1-eta)*(1-eps) * \
-                    (P_tilde[i, 0] + eps_p*P_tilde[i, 1])
-                P[i, 1] = eta*eps + (1-eta) * (eps * P_tilde[i, 0] +
-                                               (1 - eps_p + eps * eps_p) *
-                                               P_tilde[i, 1])
-            return P
-
-        def _build_joint_prob(self, P):
-            """
-                Rebuilds joint probability of finding a given bitstring when
-                taking into account SPAM errors, using per-atom probability
-                dictionnary P.
-
-                Args :
-                    P (np.array) : built above.
-            """
-            bitstrings = [np.binary_repr(i, N) for i in range(2**N)]
-            P_joint = {bitstring: np.prod(
-                       [P[k, int(bit)] for k, bit in enumerate(bitstring)])
-                       for bitstring in bitstrings}
-            return P_joint
-
-        P_tilde = _build_P_tilde(self)
-        P = _calculate_P(self, P_tilde)
-        P_joint = _build_joint_prob(self, P)
-
-        return P_joint
+        for proj in projectors:
+            self.op_matrix['sigma_' + proj] = (
+                self.basis['0'] * self.basis['1'].dag()
+            )

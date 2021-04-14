@@ -18,8 +18,10 @@ import qutip
 import numpy as np
 from copy import deepcopy
 
-from pulser import Pulse, Sequence
-from pulser.simresults import SimulationResults
+from pulser import Pulse, Sequence, Register
+from pulser.clean_results import CleanResults
+from pulser.noisy_results import NoisyResults
+from collections import Counter
 
 
 class Simulation:
@@ -292,15 +294,18 @@ class Simulation:
         return self._hamiltonian(time/1000)  # Creates new Qutip.Qobj
 
     # Run Simulation Evolution using Qutip
-    def run(self, initial_state=None, progress_bar=None, **options):
+    def run(self, initial_state=None, progress_bar=None, spam=False,
+            **options):
         """Simulate the sequence using QuTiP's solvers.
 
         Keyword Args:
             initial_state (array): The initial quantum state of the
-                           evolution. Will be transformed into a
-                           qutip.Qobj instance.
+               evolution. Will be transformed into a
+               qutip.Qobj instance.
             progress_bar (bool): If True, the progress bar of QuTiP's sesolve()
-                        will be shown.
+                will be shown.
+            spam (bool): If True, returns a NoisyResults object instead of a
+                CleanResults one, taking into account SPAM errors.
 
         Returns:
             SimulationResults: Object containing the time evolution results.
@@ -349,8 +354,107 @@ class Simulation:
             meas_basis = self._seq._measurement
         else:
             meas_basis = None
+        if not spam:
+            return CleanResults(result.states, self.dim, self._size,
+                                self.basis_name, meas_basis=meas_basis)
+        else:
+            return NoisyResults(
+                result.states, self.dim, self._size, self.basis_name,
+                meas_basis=meas_basis)
 
-        return SimulationResults(
-            result.states, self.dim, self._size, self.basis_name,
-            meas_basis=meas_basis
-        )
+    def detection_SPAM_test(self, t=-1, spam={"eta": 0.005, "epsilon": 0.01,
+                                              "epsilon_prime": 0.05},
+                            N_samples=1000, meas_basis='ground-rydberg'):
+        """
+            Returns the probability dictionary accounting for SPAM errors.
+        """
+        N = self._size
+        eta = spam["eta"]
+        eps = spam["epsilon"]
+        seq = self._seq
+
+        def _seq_without_k(self, k):
+            """
+                Returns the original sequence with a modified register :
+                no more atom k
+            """
+            seq_k = deepcopy(seq)
+            dict_k = seq_k.qubit_info
+            dict_k.pop('q' + str(k))
+            seq_k._register = Register(dict_k)
+            return seq_k
+
+        def _evolve_without_k(self, k):
+            """
+                Returns a sample, in the form of a Counter, of the
+                state of the system that evolved without atom k
+                at time t (= -1 by default)
+            """
+            sim_k = Simulation(_seq_without_k(self, k), self.sampling_rate)
+            results_k = sim_k.run()
+            return Counter(results_k.sample_state(t, meas_basis, N_samples))
+
+        def _add_atom_k(self, counter_k_missing, k):
+            """
+                Args :
+                counter_k_missing is a dictionary of bitstrings of length N-1,
+                corresponding to simulations run without atom k
+                Returns the dictionary corresponding to the detection of atom k
+                in states g or r (ground_rydberg for now), with probability
+                epsilon to be measured as r, 1-epsilon to be measured as g
+            """
+            counter_k_added = Counter()
+            for b_k, v in counter_k_missing.items():
+                bitstring_0 = b_k[:k] + str(0) + b_k[k:]
+                bitstring_1 = b_k[:k] + str(1) + b_k[k:]
+                counter_k_added[bitstring_0] += (1-eps) * v
+                counter_k_added[bitstring_1] += eps * v
+            return counter_k_added
+
+        def _build_p_faulty(self):
+            """
+                Builds the Counter for all faulty atoms, not yet considering
+                ideal runs.
+            """
+            prob_faulty = Counter()
+            for k in range(N):
+                counter_k_missing = _evolve_without_k(self, k)
+                counter_k_added = _add_atom_k(self, counter_k_missing, k)
+                prob_faulty += counter_k_added
+            # Going from number to probability
+            for k, v in prob_faulty.items():
+                prob_faulty[k] /= (N * N_samples)
+            return prob_faulty
+
+        def _build_total_p(self):
+            """
+                Returns the total probability dictionary, counting errors and
+                no prep errors situations
+                First order corrections : if one atom is faulty, we don't count
+                detection errors for other atoms, as that would O(eta*epsilon)
+                (1/10000)
+            """
+            no_prep_errors_results = self.run()
+            prob_no_prep_errors = \
+                no_prep_errors_results.sampling_with_detection_errors(t=t,
+                                                        meas_basis=meas_basis,
+                                                                      spam=spam
+                                                                      )
+            prob_total = Counter()
+            # Can't simulate an empty register... The method is for 1 qubit
+            if N == 1:
+                prob_total["0"] = eta * (1 - eps) + (1 - eta) * \
+                    (prob_no_prep_errors["0"])
+                prob_total["1"] = eta * eps + (1 - eta) * \
+                    (prob_no_prep_errors["1"])
+                return prob_total
+            # From now on : several qubits
+            prob_faulty = _build_p_faulty(self)
+            for k in prob_faulty.keys():
+                prob_faulty[k] *= eta
+            for k in prob_no_prep_errors.keys():
+                prob_no_prep_errors[k] *= (1-eta)
+            prob_total = prob_faulty + prob_no_prep_errors
+            return prob_total
+
+        return _build_total_p(self)
