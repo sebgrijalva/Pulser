@@ -16,19 +16,19 @@ import qutip
 
 
 class SimulationResults:
-    """Results of a simulation run of a pulse sequence. Abstract class.
+    """Results of a simulation run of a pulse sequence. Parent class for
+    NoisyResults and CleanResults.
 
     Contains methods for studying the states and extracting useful information
     from them.
     """
 
-    def __init__(self, run_output, dim, size, basis_name, meas_basis=None):
+    def __init__(self, run_output, dim, size, basis_name,
+                 meas_basis="ground-rydberg"):
         """Initializes a new SimulationResults instance.
 
         Args:
-            run_output (list of qutip.Qobj): List of `qutip.Qobj` corresponding
-                to the states at each time step after the evolution has been
-                simulated.
+            run_output: Depends on whether the results are clean or noisy.
             dim (int): The dimension of the local space of each atom (2 or 3).
             size (int): The number of atoms in the register.
             basis_name (str): The basis indicating the addressed atoms after
@@ -49,9 +49,10 @@ class SimulationResults:
         if meas_basis:
             if meas_basis not in {'ground-rydberg', 'digital'}:
                 raise ValueError(
-                    "`meas_basis` must be 'ground-rydberg' or 'digital'."
+                    "'meas_basis' must be 'ground-rydberg' or 'digital'."
                     )
         self._meas_basis = meas_basis
+        self._build_basis()
 
     def expect(self, obs_list):
         """Calculates the expectation value of a list of observables.
@@ -92,20 +93,14 @@ class SimulationResults:
         """
         pass
 
-    def _build_basis_and_op_matrices(self):
-        """Determine dimension, basis and projector operators, in 0 and 1
+    def _build_basis(self):
+        """Determine dimension and basis in 0 and 1
         notation depending on the measurement basis"""
+        basis = []
         if (self._meas_basis == "ground-rydberg"):
             basis = ['r', 'g']
-            projectors = ['gr', 'rr', 'gg']
         elif (self._meas_basis == "digital"):
             basis = ['g', 'h']
-            projectors = ['hg', 'hh', 'gg']
+        # verified
         self.basis = {
-                    'i': qutip.basis(self.dim, i) for i, b in enumerate(basis)}
-        self.op_matrix = {'I': qutip.qeye(self.dim)}
-
-        for proj in projectors:
-            self.op_matrix['sigma_' + proj] = (
-                self.basis['0'] * self.basis['1'].dag()
-            )
+            str(i): qutip.basis(self._dim, 1-i) for i, b in enumerate(basis)}

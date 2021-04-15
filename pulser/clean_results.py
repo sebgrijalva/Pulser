@@ -26,7 +26,8 @@ class CleanResults(SimulationResults):
     from them.
     """
 
-    def __init__(self, run_output, dim, size, basis_name, meas_basis=None):
+    def __init__(self, run_output, dim, size, basis_name,
+                 meas_basis="ground-rydberg"):
         """Initializes a new CleanResults instance.
 
         Args:
@@ -168,9 +169,7 @@ class CleanResults(SimulationResults):
 
         N = self._size
         self.N_samples = N_samples
-
         final_state = self._states[t]
-
         # Case of a density matrix
         # Don't take the modulus square in this case !
         if final_state.type != "ket":
@@ -195,9 +194,7 @@ class CleanResults(SimulationResults):
             elif meas_basis == 'digital':
                 one_state = 2       # 1 = |h>
                 ex_one = slice(0, 2)
-
-            # verified : (3, N)
-            probs = probs.reshape(3, N)
+            probs = probs.reshape(tuple([3 for _ in range(N)]))
             weights = []
             for dec_val in range(2**N):
                 ind = []
@@ -220,8 +217,13 @@ class CleanResults(SimulationResults):
         return Counter(
                {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]})
 
-    def detection_SPAM_independent(self, spam={"eta": 0.005, "epsilon": 0.01,
-                                   "epsilon_prime": 0.05}, N_samples=1000,
+    def sample_final_state(self, meas_basis='ground-rydberg', N_samples=1000):
+        return self.sample_state(-1, meas_basis, N_samples)
+
+    def detection_SPAM_independent(self, t=-1,
+                                   spam={"eta": 0.005, "epsilon": 0.01,
+                                         "epsilon_prime": 0.05},
+                                   N_samples=1000,
                                    meas_basis='ground-rydberg'):
         r"""Returns the probability distribution
         of states really detected instead of
@@ -236,7 +238,7 @@ class CleanResults(SimulationResults):
         """
 
         N = self._size
-        results = self.sample_final_state(meas_basis)
+        results = self.sample_state(t, meas_basis)
 
         def _build_P_tilde(self):
             """
@@ -299,7 +301,7 @@ class CleanResults(SimulationResults):
 
         return P_joint
 
-    def detection_from_basis_state(self, shot, spam):
+    def detection_from_basis_state(self, N_d, shot, spam):
         """Returns the probability distribution of states really detected
             when the simulation detects bitstring shot.
 
@@ -320,33 +322,31 @@ class CleanResults(SimulationResults):
         probs = [int(shot[i]) * prob_1_to_0 + (1 - int(shot[i]))
                  * prob_0_to_1 for i in range(len(shot))]
         probs += [1 - sum(probs)]
-        detected_dict = {shot: probs[-1]}
+        shots = np.random.multinomial(N_d, probs)
+        detected_dict = {shot: shots[-1]}
+
         for i in range(len(shot)):
-            # We flip the i-th bit of the shot bitstring
-            detected_dict[shot[:i] + str(1 - int(shot[i])) + shot[i+1:]] = \
-                probs[i]
+            if shots[i]:
+                detected_dict[shot[:i] + str(1 - int(shot[i])) + shot[i
+                              + 1:]] = shots[i]
         return Counter(detected_dict)
 
-    def sampling_with_detection_errors(self, t=-1, meas_basis='ground-rydberg',
-                                       N_samples=1000,
-                                       spam={"eta": 0.005,
-                                             "epsilon": 0.01,
-                                             "epsilon_prime": 0.05}):
+    def sampling_with_detection_errors(self, spam, t=-1,
+                                       meas_basis='ground-rydberg',
+                                       N_samples=1000):
         """Returns the distribution of states really detected instead of
         sampled_state. Doesn't take state preparation errors into account.
 
         Args:
             sampled_state (dict): dictionnary of detected states as binary
-            string with their probability of detection.
+            string with their detection number.
             spam (dict): dictionnary gathering the SPAM error
             probabilities.
         """
         sampled_state = self.sample_state(t=t, meas_basis=meas_basis)
         detected_sample_dict = Counter()
         for (shot, N_d) in sampled_state.items():
-            dict_state = self.detection_from_basis_state(shot, spam)
-            for k in dict_state.keys():
-                dict_state[k] *= N_d / N_samples
+            dict_state = self.detection_from_basis_state(N_d, shot, spam)
             detected_sample_dict += dict_state
 
         return detected_sample_dict

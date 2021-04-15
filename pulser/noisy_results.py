@@ -27,13 +27,14 @@ class NoisyResults(SimulationResults):
     information from them.
     """
 
-    def __init__(self, run_output, dim, size, basis_name, meas_basis=None):
+    def __init__(self, run_output, dim, size, basis_name,
+                 meas_basis="ground-rydberg"):
         """
         Initializes a new NoisyResults instance.
 
         Args:
             run_output (Counter) : Counter returning the population of each
-                multi-qubits state, given as a bitstring.
+                multi-qubits state, represented as a bitstring.
             dim (int): The dimension of the local space of each atom (2 or 3).
             size (int): The number of atoms in the register.
             basis_name (str): The basis indicating the addressed atoms after
@@ -54,18 +55,15 @@ class NoisyResults(SimulationResults):
                 calculated. If necessary, each member will be transformed into
                 a qutip.Qobj instance.
         """
-        self._build_basis_and_op_matrices()
+        def _proj_from_bitstring(bitstring):
+            proj = qutip.tensor([self.basis[i] * self.basis[i].dag() for i
+                                 in bitstring])
+            return proj
 
-        def _ket_from_bitstring(bitstring):
-            ket = qutip.tensor([self.basis[i] for i in bitstring])
-            return ket
-
-        # "fake" final state, we forget each individual phase, but this is
-        # useful to calculate expectation values
-        final_ket = 0
-        for b, v in self.run_output:
-            final_ket += np.sqrt(v) * _ket_from_bitstring(b)
-
+        # To calculate expectation values with QuTiP
+        density_matrix = 0
+        for b, v in self._states.items():
+            density_matrix += v * _proj_from_bitstring(b)
         if not isinstance(obs_list, (list, np.ndarray)):
             raise TypeError("`obs_list` must be a list of operators")
 
@@ -77,10 +75,10 @@ class NoisyResults(SimulationResults):
             if obs.shape != (self._dim**self._size, self._dim**self._size):
                 raise ValueError("Incompatible shape of observable.")
             # Transfrom to qutip.Qobj and take dims from state
-            dim_list = [self._states[0].dims[0], self._states[0].dims[0]]
-            qobj_list.append(qutip.Qobj(obs, dims=dim_list))
+            # dim_list = [self._dim, self._dim]
+            qobj_list.append(qutip.Qobj(obs))
 
-        return [qutip.expect(qobj, final_ket) for qobj in qobj_list]
+        return [qutip.expect(qobj, density_matrix) for qobj in qobj_list]
 
     def sample_state(self, t=-1, meas_basis='ground-rydberg', N_samples=1000):
         r"""Returns the result of multiple measurements in a given basis.
@@ -103,6 +101,7 @@ class NoisyResults(SimulationResults):
                 left as None, uses the measurement basis defined in the
                 original sequence.
             N_samples (int, default=1000): Number of samples to take.
+            t (int, default=-1) : Time at which the system is measured.
 
         Raises:
             ValueError: If trying to sample without a defined 'meas_basis' in
@@ -111,7 +110,7 @@ class NoisyResults(SimulationResults):
         N = self._size
         self.N_samples = N_samples
         bitstrings = [np.binary_repr(k, N) for k in range(2**N)]
-        probs = [self.run_output[b] for b in bitstrings]
+        probs = [self._states[b] for b in bitstrings]
         if meas_basis is None:
             if self._meas_basis is None:
                 raise ValueError(
@@ -124,16 +123,16 @@ class NoisyResults(SimulationResults):
             raise ValueError(
                 "'meas_basis' can only be 'ground-rydberg' or 'digital'."
                 )
-
         if self._dim == 2:
             if meas_basis == self._basis_name:
                 # State vector ordered with r first for 'ground_rydberg'
                 # e.g. N=2: [rr, rg, gr, gg] -> [11, 10, 01, 00]
                 # Invert the order ->  [00, 01, 10, 11] correspondence
-                weights = probs if meas_basis == 'digital' else probs[::-1]
+                # Verified : order already reversed in clean_results when
+                # producing a NoiseResults !
+                weights = probs[::-1] if meas_basis == 'digital' else probs
             else:
                 return {'0' * N: int(N_samples)}
-            weights = weights.flatten()
 
         elif self._dim == 3:
             if meas_basis == 'ground-rydberg':
@@ -143,9 +142,9 @@ class NoisyResults(SimulationResults):
                 one_state = 2       # 1 = |h>
                 ex_one = slice(0, 2)
 
-            # verified : (3, N)
-            probs = probs.reshape(3, N)
+            probs = probs.reshape(tuple([3 for _ in range(N)]))
             weights = []
+
             for dec_val in range(2**N):
                 ind = []
                 for v in np.binary_repr(dec_val, width=N):
@@ -163,7 +162,9 @@ class NoisyResults(SimulationResults):
                 "Cannot sample system with single-atom state vectors of "
                 "dimension > 3."
                 )
-
-        dist = np.random.multinomial(N_samples, self.run_output)
+        dist = np.random.multinomial(N_samples, weights)
         return Counter(
                {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]})
+
+    def sample_final_state(self, meas_basis='ground-rydberg', N_samples=1000):
+        return self.sample_state(-1, meas_basis, N_samples)
