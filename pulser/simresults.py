@@ -95,7 +95,9 @@ class SimulationResults:
 
     def _build_basis(self):
         """Determine dimension and basis in 0 and 1
-        notation depending on the measurement basis"""
+        notation depending on the measurement basis
+        Noisy results can't be in "all-basis", they are in 2 dimensions.
+        """
         basis = []
         if (self._meas_basis == "ground-rydberg"):
             basis = ['r', 'g']
@@ -103,4 +105,4 @@ class SimulationResults:
             basis = ['g', 'h']
         # verified
         self.basis = {
-            str(i): qutip.basis(self._dim, 1-i) for i, b in enumerate(basis)}
+            str(i): qutip.basis(2, i) for i, b in enumerate(basis)}

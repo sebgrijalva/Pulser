@@ -336,6 +336,7 @@ class CleanResults(SimulationResults):
                                        N_samples=1000):
         """Returns the distribution of states really detected instead of
         sampled_state. Doesn't take state preparation errors into account.
+        Part of the SPAM implementation.
 
         Args:
             sampled_state (dict): dictionnary of detected states as binary

@@ -311,7 +311,7 @@ class Simulation:
                 CleanResults one, taking into account SPAM errors.
             t (int): Time at which the results are to be returned ;
                 only used with noisy simulations
-            meas_basis: Measurement basis
+            meas_basis: Measurement basis : used with noisy simulations
 
         Returns:
             SimulationResults: Object containing the time evolution results.
@@ -323,7 +323,7 @@ class Simulation:
             return NoisyResults(
                 self.detection_SPAM(spam_dict, t=t,
                                     meas_basis=meas_basis),
-                self.dim, self._size, self.basis_name, meas_basis)
+                2, self._size, self.basis_name, meas_basis)
 
         def _build_lindblad_term(self):
             L = []
@@ -471,7 +471,7 @@ class Simulation:
                 no_prep_errors_results.sampling_with_detection_errors(
                     spam, t=t, meas_basis=meas_basis)
             prob_total = Counter()
-            # Can't simulate an empty register... This part is for 1 qubit
+            # Can't simulate an empty register... This part for 1 qubit only
             if N == 1:
                 prob_total["0"] = eta * (1 - eps) + (1 - eta) * \
                     (detect_no_prep_errors["0"] / N_samples)
