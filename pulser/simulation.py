@@ -310,12 +310,20 @@ class Simulation:
             spam (bool): If True, returns a NoisyResults object instead of a
                 CleanResults one, taking into account SPAM errors.
             t (int): Time at which the results are to be returned ;
-                only used with noisy simulations
-            meas_basis: Measurement basis : used with noisy simulations
+                only used with noisy simulations.
+            meas_basis: Measurement basis : used with noisy simulations to
+                convert a ket in Hilbert space into a bitstring (for digital
+                basis).
+            spam_dict: A dictionary containing SPAM error probabilities.
 
         Returns:
             SimulationResults: Object containing the time evolution results.
+                Is a CleanResults object if spam = False, and a NoisyResults
+                one if spam = True.
         """
+        if not isinstance(spam_dict, dict):
+            raise TypeError("`spam_dict` must be a dictionary")
+
         if hasattr(self._seq, '_measurement'):
             meas_basis = self._seq._measurement
 

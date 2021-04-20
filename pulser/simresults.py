@@ -49,7 +49,7 @@ class SimulationResults:
         if meas_basis:
             if meas_basis not in {'ground-rydberg', 'digital'}:
                 raise ValueError(
-                    "'meas_basis' must be 'ground-rydberg' or 'digital'."
+                    "`meas_basis` must be 'ground-rydberg' or 'digital'."
                     )
         self._meas_basis = meas_basis
         self._build_basis()

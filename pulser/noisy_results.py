@@ -49,6 +49,9 @@ class NoisyResults(SimulationResults):
         """
         super().__init__(run_output, dim, size, basis_name, meas_basis)
         # Can't have more than 2 states : projections have already been applied
+        # This is not the case for a CleanResults object, containing states in
+        # Hilbert space, but NoisyResults contains a probability distribution
+        # of bitstrings, not atomic states
         self._dim = 2
 
     def get_final_state(self):
@@ -56,10 +59,6 @@ class NoisyResults(SimulationResults):
 
         Returns:
             qutip.Qobj: The resulting final state as a density matrix.
-
-        Raises:
-            TypeError: If trying to reduce to a basis that would eliminate
-                states with significant occupation probabilites.
         """
         def _proj_from_bitstring(bitstring):
             proj = qutip.tensor([self.basis[i] * self.basis[i].dag() for i
@@ -80,6 +79,8 @@ class NoisyResults(SimulationResults):
                 A list of observables whose expectation value will be
                 calculated. If necessary, each member will be transformed into
                 a qutip.Qobj instance.
+        Returns:
+            list: the list of expectation values of each operator.
         """
 
         density_matrix = self.get_final_state()
@@ -97,7 +98,7 @@ class NoisyResults(SimulationResults):
 
         return [qutip.expect(qobj, density_matrix) for qobj in qobj_list]
 
-    def sample_state(self, meas_basis='ground-rydberg', N_samples=1000):
+    def sample_state(self, meas_basis=None, N_samples=1000):
         r"""Returns the result of multiple measurements in a given basis.
         Keyword Args:
             meas_basis (str, default=None): 'ground-rydberg' or 'digital'. If
@@ -110,6 +111,19 @@ class NoisyResults(SimulationResults):
             ValueError: If trying to sample without a defined 'meas_basis' in
                 the arguments when the original sequence is not measured.
         """
+        if meas_basis is None:
+            if self._meas_basis is None:
+                raise ValueError(
+                    "Can't accept an undefined measurement basis because the "
+                    "original sequence has no measurement."
+                    )
+            meas_basis = self._meas_basis
+
+        if meas_basis not in {'ground-rydberg', 'digital'}:
+            raise ValueError(
+                "`meas_basis` can only be 'ground-rydberg' or 'digital'."
+                )
+
         N = self._size
         self.N_samples = N_samples
         bitstrings = [np.binary_repr(k, N) for k in range(2**N)]

@@ -128,7 +128,7 @@ class CleanResults(SimulationResults):
 
         return [qutip.expect(qobj, self._states) for qobj in qobj_list]
 
-    def sample_state(self, t=-1, meas_basis='ground-rydberg', N_samples=1000):
+    def sample_state(self, t=-1, meas_basis=None, N_samples=1000):
         r"""Returns the result of multiple measurements in a given basis.
 
         The encoding of the results depends on the meaurement basis. Namely:
@@ -164,7 +164,7 @@ class CleanResults(SimulationResults):
 
         if meas_basis not in {'ground-rydberg', 'digital'}:
             raise ValueError(
-                "'meas_basis' can only be 'ground-rydberg' or 'digital'."
+                "`meas_basis` can only be 'ground-rydberg' or 'digital'."
                 )
 
         N = self._size
@@ -236,7 +236,8 @@ class CleanResults(SimulationResults):
             spam (dict): dictionnary gathering the SPAM error
             probabilities.
         """
-
+        if not isinstance(spam, dict):
+            raise TypeError("`spam` must be a dictionary")
         N = self._size
         results = self.sample_state(t, meas_basis)
 
