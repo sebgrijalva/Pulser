@@ -18,8 +18,7 @@ import numpy as np
 from copy import deepcopy
 
 from pulser import Pulse, Sequence, Register
-from pulser.clean_results import CleanResults
-from pulser.noisy_results import NoisyResults
+from pulser.simresults import CleanResults, NoisyResults
 from collections import Counter, namedtuple
 
 _TimeSlot = namedtuple('_TimeSlot', ['type', 'ti', 'tf', 'targets'])
@@ -91,11 +90,12 @@ class Simulation:
 
         def write_samples(slot, samples_dict):
             samples_dict['amp'][slot.ti:slot.tf] += slot.type.amplitude.samples
-            noise = 1
             if(self._noise["Doppler"]):
                 # sigma = k_eff \Delta v : See Sylvain's paper
                 noise = 1 + np.random.normal(
                             0, 2*np.pi*0.12, slot.tf - slot.ti)
+            else:
+                noise = 1
             samples_dict['det'][slot.ti:slot.tf] += \
                 slot.type.detuning.samples * noise
             samples_dict['phase'][slot.ti:slot.tf] = slot.type.phase
@@ -402,8 +402,7 @@ class Simulation:
             for channel in seq_k.declared_channels:
                 addr = seq_k.declared_channels[channel].addressing
                 if addr == 'Local':
-                    for i in range(len(seq_k._schedule[channel])):
-                        slot = seq_k._schedule[channel][i]
+                    for i, slot in enumerate(seq_k._schedule[channel]):
                         if isinstance(slot.type, Pulse):
                             for qubit in slot.targets:  # Allow multiaddressing
                                 # We remove the pulse if q_k was the only qubit
