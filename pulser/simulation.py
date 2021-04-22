@@ -38,7 +38,7 @@ class Simulation:
     Keyword Args:
         sampling_rate (float): The fraction of samples that we wish to
             extract from the pulse sequence to simulate. Has to be a
-            value between 0.05 and 1.0
+            value between 0.05 and 1.0.
     """
 
     def __init__(self, sequence, sampling_rate=1.0, noise={"Doppler": False},
@@ -284,9 +284,9 @@ class Simulation:
                     Hamiltonian (in ns).
 
         Returns:
-            Qutip.Qobj: A new Qobj for the Hamiltonian with coefficients
-                    extracted from the effective sequence (determined by
-                    `self.sampling_rate`) at the specified time.
+            qutip.Qobj: A new Qobj for the Hamiltonian with coefficients
+            extracted from the effective sequence (determined by
+            `self.sampling_rate`) at the specified time.
         """
         if time > 1000 * self._times[-1]:
             raise ValueError("Provided time is larger than sequence duration.")

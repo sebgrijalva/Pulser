@@ -32,7 +32,9 @@ class SimulationResults(ABC):
         """Initializes a new SimulationResults instance.
 
         Args:
-            run_output: Depends on whether the results are clean or noisy.
+            run_output (List[qutip.Qobj]): List of ``qutip.Qobj`` corresponding
+                to the states at each time step after the evolution has been
+                simulated.
             dim (int): The dimension of the local space of each atom (2 or 3).
             size (int): The number of atoms in the register.
             basis_name (str): The basis indicating the addressed atoms after
@@ -313,10 +315,9 @@ class CleanResults(SimulationResults):
         """Calculates the expectation value of a list of observables.
 
         Args:
-            obs_list (array-like of qutip.Qobj or array-like of numpy.ndarray):
-                A list of observables whose expectation value will be
-                calculated. If necessary, each member will be transformed into
-                a qutip.Qobj instance.
+            obs_list (Array[qutip, numpy.ndarray]): A list of observables whose
+                expectation value will be calculated. If necessary, each member
+                will be transformed into a ``qutip.Qobj`` instance.
         """
         if not isinstance(obs_list, (list, np.ndarray)):
             raise TypeError("`obs_list` must be a list of operators")
