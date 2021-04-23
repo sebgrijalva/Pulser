@@ -216,8 +216,7 @@ class NoisyResults(SimulationResults):
 
         N = self._size
         self.N_samples = N_samples
-        bitstrings = [np.binary_repr(k, N) for k in range(2**N)]
-        probs = [self._states[b] for b in bitstrings]
+        probs = list(self._states.values())
 
         # State vector ordered with r first for 'ground_rydberg'
         # e.g. N=2: [rr, rg, gr, gg] -> [11, 10, 01, 00]
