@@ -116,10 +116,16 @@ class NoisyResults(SimulationResults):
     information from them.
     """
 
-    def __init__(self, run_output, dim, size, basis_name,
-                 meas_basis="ground-rydberg"):
+    def __init__(self, run_output, size, basis_name,
+                 meas_basis="ground-rydberg", dim=2):
         """
         Initializes a new NoisyResults instance.
+
+        Warning : Can't have single-atom Hilbert spaces with dimension bigger
+            than 2 for NoisyResults objects.
+            This is not the case for a CleanResults object, containing states
+            in Hilbert space, but NoisyResults contains a probability
+            distribution of bitstrings, not atomic states
 
         Args:
             run_output (Counter) : Counter returning the population of each
@@ -134,11 +140,6 @@ class NoisyResults(SimulationResults):
                 is desired.
         """
         super().__init__(run_output, dim, size, basis_name, meas_basis)
-        # Can't have more than 2 states : projections have already been applied
-        # This is not the case for a CleanResults object, containing states in
-        # Hilbert space, but NoisyResults contains a probability distribution
-        # of bitstrings, not atomic states
-        self._dim = 2
 
     def get_final_state(self):
         """Get the final state (density matrix here !) of the simulation.
@@ -147,8 +148,14 @@ class NoisyResults(SimulationResults):
             qutip.Qobj: The resulting final state as a density matrix.
         """
         def _proj_from_bitstring(bitstring):
-            proj = qutip.tensor([qutip.basis(2, 1-int(i)).proj() for i
-                                 in bitstring])
+            # In the digital case, |h> = |1> = qutip.basis()
+            if self._meas_basis == 'digital':
+                proj = qutip.tensor([qutip.basis(2, int(i)).proj() for i
+                                     in bitstring])
+            # ground-rydberg measurement basis case
+            else:
+                proj = qutip.tensor([qutip.basis(2, 1-int(i)).proj() for i
+                                     in bitstring])
             return proj
 
         return sum(v * _proj_from_bitstring(b) for
@@ -401,7 +408,7 @@ class CleanResults(SimulationResults):
             elif meas_basis == 'digital':
                 one_state = 2       # 1 = |h>
                 ex_one = slice(0, 2)
-            probs = probs.reshape(tuple(3 for _ in range(N)))
+            probs = probs.reshape([3]*N)
             weights = []
             for dec_val in range(2**N):
                 ind = []

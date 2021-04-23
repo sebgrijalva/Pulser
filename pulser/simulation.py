@@ -331,7 +331,7 @@ class Simulation:
             return NoisyResults(
                 self.detection_SPAM(spam_dict, t=t,
                                     meas_basis=meas_basis),
-                2, self._size, self.basis_name, meas_basis)
+                self._size, self.basis_name, meas_basis=meas_basis)
 
         def _build_lindblad_term(self):
             L = []
@@ -463,7 +463,7 @@ class Simulation:
                 counter_k_added = _add_atom_k(self, counter_k_missing, k)
                 prob_faulty += counter_k_added
             # Going from number to probability
-            for b, v in prob_faulty.items():
+            for b in prob_faulty:
                 prob_faulty[b] /= (N * N_samples)
             return prob_faulty
 
@@ -487,10 +487,10 @@ class Simulation:
                 return prob_total
             # From now on : several qubits
             prob_faulty = _build_p_faulty(self)
-            for k in prob_faulty.keys():
+            for k in prob_faulty:
                 prob_faulty[k] *= eta
             # Need to go from detection number to probability
-            for k in detect_no_prep_errors.keys():
+            for k in detect_no_prep_errors:
                 detect_no_prep_errors[k] *= (1-eta) / N_samples
             prob_total = prob_faulty + detect_no_prep_errors
             return prob_total
