@@ -218,7 +218,7 @@ class NoisyResults(SimulationResults):
         self.N_samples = N_samples
         probs = list(self._states.values())
 
-        dist = np.random.multinomial(N_samples, weights)
+        dist = np.random.multinomial(N_samples, probs)
         return Counter(
                {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]})
 
