@@ -218,13 +218,6 @@ class NoisyResults(SimulationResults):
         self.N_samples = N_samples
         probs = list(self._states.values())
 
-        # State vector ordered with r first for 'ground_rydberg'
-        # e.g. N=2: [rr, rg, gr, gg] -> [11, 10, 01, 00]
-        # Invert the order ->  [00, 01, 10, 11] correspondence
-        # VERIFIED : order already reversed in detection_SPAM when
-        # producing a NoiseResult !
-        weights = probs[::-1] if meas_basis == 'digital' else probs
-
         dist = np.random.multinomial(N_samples, weights)
         return Counter(
                {np.binary_repr(i, N): dist[i] for i in np.nonzero(dist)[0]})
