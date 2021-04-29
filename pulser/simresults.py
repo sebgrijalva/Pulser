@@ -216,7 +216,10 @@ class NoisyResults(SimulationResults):
 
         N = self._size
         self.N_samples = N_samples
-        probs = list(self._states.values())
+        # need all bitstrings to accurately represent states : else some would
+        # be missing
+        bitstrings = [np.binary_repr(k, N) for k in range(2**N)]
+        probs = [self._states[b] for b in bitstrings]
 
         dist = np.random.multinomial(N_samples, probs)
         return Counter(
