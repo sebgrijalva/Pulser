@@ -21,7 +21,7 @@ from copy import deepcopy
 from pulser import Sequence, Pulse, Register, Simulation
 from pulser.devices import Chadoq2
 from pulser.waveforms import BlackmanWaveform
-from pulser.simresults import SimulationResults
+from pulser.clean_results import CleanResults
 
 q_dict = {"A": np.array([0., 0.]),
           "B": np.array([0., 10.]),
@@ -48,10 +48,10 @@ ground = qutip.tensor([qutip.basis(2, 1), qutip.basis(2, 1)])
 
 def test_initialization():
     with pytest.raises(ValueError, match="`basis_name` must be"):
-        SimulationResults(state, 2, 2, 'bad_basis')
+        CleanResults(state, 2, 2, 'bad_basis')
     with pytest.raises(ValueError, match="`meas_basis` must be"):
-        SimulationResults(state, 2, 2, 'ground-rydberg',
-                          'wrong_measurement_basis')
+        CleanResults(state, 2, 2, 'ground-rydberg',
+                     'wrong_measurement_basis')
 
     assert results._dim == 2
     assert results._size == 2
@@ -108,10 +108,8 @@ def test_expect():
 
 
 def test_sample_final_state():
-    with pytest.raises(ValueError, match="undefined measurement basis"):
-        sim_no_meas = Simulation(seq_no_meas)
-        results_no_meas = sim_no_meas.run()
-        results_no_meas.sample_final_state()
+    sim_no_meas = Simulation(seq_no_meas)
+    results_no_meas = sim_no_meas.run()
     with pytest.raises(ValueError, match="can only be"):
         results_no_meas.sample_final_state('wrong_measurement_basis')
     with pytest.raises(NotImplementedError, match="dimension > 3"):
