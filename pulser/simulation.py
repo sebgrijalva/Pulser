@@ -92,36 +92,48 @@ class Simulation:
             samples_dict['amp'][slot.ti:slot.tf] += slot.type.amplitude.samples
             if(self._noise["Doppler"]):
                 # sigma = k_eff \Delta v : See Sylvain's paper
-                noise = 1 + np.random.normal(
-                            0, 2*np.pi*0.12, slot.tf - slot.ti)
+                # effective formula
+                noise = np.random.normal(0, 2*np.pi*0.12)
             else:
-                noise = 1
-            samples_dict['det'][slot.ti:slot.tf] += \
-                slot.type.detuning.samples * noise
+                noise = 0
+            samples_dict['det'][slot.ti:slot.tf] = \
+                slot.type.detuning.samples + noise
             samples_dict['phase'][slot.ti:slot.tf] = slot.type.phase
 
         for channel in self._seq.declared_channels:
             addr = self._seq.declared_channels[channel].addressing
             basis = self._seq.declared_channels[channel].basis
 
-            samples_dict = self.samples[addr][basis]
-
-            if addr == 'Global':
+            if addr == 'Global' and not self._noise["Doppler"]:
+                samples_dict = self.samples[addr][basis]
                 if not samples_dict:
                     samples_dict = prepare_dict()
                 for slot in self._seq._schedule[channel]:
                     if isinstance(slot.type, Pulse):
                         write_samples(slot, samples_dict)
+                self.samples[addr][basis] = samples_dict
+
+            # Doppler noise : global becomes local for each qubit in the reg
+            elif addr == 'Global':
+                samples_dict = self.samples['Local'][basis]
+                for slot in self._seq._schedule[channel]:
+                    if isinstance(slot.type, Pulse):
+                        # global to local
+                        for qubit in self._qid_index.keys():
+                            if qubit not in samples_dict:
+                                samples_dict[qubit] = prepare_dict()
+                            write_samples(slot, samples_dict[qubit])
+                self.samples['Local'][basis] = samples_dict
 
             elif addr == 'Local':
+                samples_dict = self.samples['Local'][basis]
                 for slot in self._seq._schedule[channel]:
                     if isinstance(slot.type, Pulse):
                         for qubit in slot.targets:  # Allow multiaddressing
                             if qubit not in samples_dict:
                                 samples_dict[qubit] = prepare_dict()
                             write_samples(slot, samples_dict[qubit])
-
-            self.samples[addr][basis] = samples_dict
+                self.samples[addr][basis] = samples_dict
 
     def _build_basis_and_op_matrices(self):
         """Determine dimension, basis and projector operators."""
