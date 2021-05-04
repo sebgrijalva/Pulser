@@ -117,7 +117,7 @@ class NoisyResults(SimulationResults):
     """
 
     def __init__(self, run_output, size, basis_name,
-                 meas_basis="ground-rydberg", dim=2):
+                 meas_basis="ground-rydberg", dim=2, N_samples=1000):
         """
         Initializes a new NoisyResults instance.
 
@@ -128,18 +128,21 @@ class NoisyResults(SimulationResults):
             distribution of bitstrings, not atomic states
 
         Args:
-            run_output (Counter) : Counter returning the population of each
+            run_output (Counter) : Counter returning the probability of each
                 multi-qubits state, represented as a bitstring.
             dim (int): The dimension of the local space of each atom (2 or 3).
             size (int): The number of atoms in the register.
             basis_name (str): The basis indicating the addressed atoms after
                 the pulse sequence ('ground-rydberg', 'digital' or 'all').
+            N_samples (int): number of times the simulations that gave this
+                result have been run.
 
         Keyword Args:
             meas_basis (None or str): The basis in which a sampling measurement
                 is desired.
         """
         super().__init__(run_output, dim, size, basis_name, meas_basis)
+        self.N_samples = N_samples
 
     def get_final_state(self):
         """Get the final state (density matrix here !) of the simulation.

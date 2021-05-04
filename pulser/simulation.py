@@ -41,8 +41,8 @@ class Simulation:
             value between 0.05 and 1.0.
     """
 
-    def __init__(self, sequence, sampling_rate=1.0, noise={"Doppler": False},
-                 damping={"Emission": False}):
+    def __init__(self, sequence, sampling_rate=1.0,
+                 noise={"Doppler": False, "Amplitude": False}):
         """Initialize the Simulation with a specific pulser.Sequence."""
         if not isinstance(sequence, Sequence):
             raise TypeError("The provided sequence has to be a valid "
@@ -54,7 +54,6 @@ class Simulation:
                              "sequence.")
         self._seq = sequence
         self._noise = noise
-        self._damping = damping
         self._qdict = self._seq.qubit_info
         self._size = len(self._qdict)
         self._tot_duration = max(
@@ -88,23 +87,34 @@ class Simulation:
                     'det': np.zeros(self._tot_duration),
                     'phase': np.zeros(self._tot_duration)}
 
-        def write_samples(slot, samples_dict):
-            samples_dict['amp'][slot.ti:slot.tf] += slot.type.amplitude.samples
+        def write_samples(slot, samples_dict, position=np.array([])):
+            noise_det = 0
+            noise_amp = 1
+
             if(self._noise["Doppler"]):
                 # sigma = k_eff \Delta v : See Sylvain's paper
                 # effective formula
-                noise = np.random.normal(0, 2*np.pi*0.12)
-            else:
-                noise = 0
+                noise_det = np.random.normal(0, 2*np.pi*0.12)
+
+            if(self._noise["Amplitude"] and position.size != 0):
+                # Gaussian beam for global pulses
+                r = np.linalg.norm(position)
+                w0 = 175.
+                noise_amp = np.random.normal(1, 1e-3) * \
+                    np.exp(-r**2/w0**2)
+
+            samples_dict['amp'][slot.ti:slot.tf] = \
+                slot.type.amplitude.samples * noise_amp
             samples_dict['det'][slot.ti:slot.tf] = \
-                slot.type.detuning.samples + noise
+                slot.type.detuning.samples + noise_det
             samples_dict['phase'][slot.ti:slot.tf] = slot.type.phase
 
         for channel in self._seq.declared_channels:
             addr = self._seq.declared_channels[channel].addressing
             basis = self._seq.declared_channels[channel].basis
 
-            if addr == 'Global' and not self._noise["Doppler"]:
+            if addr == 'Global' and not \
+                    (self._noise["Doppler"] or self._noise["Amplitude"]):
                 samples_dict = self.samples[addr][basis]
                 if not samples_dict:
                     samples_dict = prepare_dict()
@@ -113,7 +123,9 @@ class Simulation:
                         write_samples(slot, samples_dict)
                 self.samples[addr][basis] = samples_dict
 
-            # Doppler noise : global becomes local for each qubit in the reg
+            # any noise : global becomes local for each qubit in the reg
+            # ampltiude noise : Gaussian beam effect depending on each qubit's
+            # position
             elif addr == 'Global':
                 samples_dict = self.samples['Local'][basis]
                 for slot in self._seq._schedule[channel]:
@@ -122,7 +134,8 @@ class Simulation:
                         for qubit in self._qid_index.keys():
                             if qubit not in samples_dict:
                                 samples_dict[qubit] = prepare_dict()
-                            write_samples(slot, samples_dict[qubit])
+                            write_samples(slot, samples_dict[qubit],
+                                          position=self._qdict[qubit])
                 self.samples['Local'][basis] = samples_dict
 
             elif addr == 'Local':
@@ -137,31 +150,24 @@ class Simulation:
 
     def _build_basis_and_op_matrices(self):
         """Determine dimension, basis and projector operators."""
-        # This case when computing spontaneous emission errors
-        if self._damping["Emission"]:
+        # No samples => Empty dict entry => False
+        if (not self.samples['Global']['digital']
+                and not self.samples['Local']['digital']):
+            self.basis_name = 'ground-rydberg'
+            self.dim = 2
+            basis = ['r', 'g']
+            projectors = ['gr', 'rr', 'gg']
+        elif (not self.samples['Global']['ground-rydberg']
+                and not self.samples['Local']['ground-rydberg']):
+            self.basis_name = 'digital'
+            self.dim = 2
+            basis = ['g', 'h']
+            projectors = ['hg', 'hh', 'gg']
+        else:
             self.basis_name = 'all'  # All three states
             self.dim = 3
             basis = ['r', 'g', 'h']
             projectors = ['gr', 'hg', 'rr', 'gg', 'hh', 'hr']
-        else:
-            # No samples => Empty dict entry => False
-            if (not self.samples['Global']['digital']
-                    and not self.samples['Local']['digital']):
-                self.basis_name = 'ground-rydberg'
-                self.dim = 2
-                basis = ['r', 'g']
-                projectors = ['gr', 'rr', 'gg']
-            elif (not self.samples['Global']['ground-rydberg']
-                    and not self.samples['Local']['ground-rydberg']):
-                self.basis_name = 'digital'
-                self.dim = 2
-                basis = ['g', 'h']
-                projectors = ['hg', 'hh', 'gg']
-            else:
-                self.basis_name = 'all'  # All three states
-                self.dim = 3
-                basis = ['r', 'g', 'h']
-                projectors = ['gr', 'hg', 'rr', 'gg', 'hh', 'hr']
 
         self.basis = {b: qutip.basis(self.dim, i) for i, b in enumerate(basis)}
         self.op_matrix = {'I': qutip.qeye(self.dim)}
@@ -207,21 +213,6 @@ class Simulation:
                 U = 0.5 * self._seq._device.interaction_coeff / dist**6
                 vdw += U * self._build_operator('sigma_rr', q1, q2)
             return vdw
-
-        def make_spontaneous_emission_term(self):
-            H_emi = 0
-            omega_r = 2 * np.pi * 0.1
-            omega_b = 2 * np.pi * 0.1
-            big_delta = 2 * np.pi * 740
-            # detuning
-            delta = 2 * np.pi * 100
-            for q in self._qdict.keys():
-                H_emi += (omega_r / 2) * self._build_operator('sigma_hg',
-                                                              q).dag()
-                H_emi += (omega_b / 2) * self._build_operator('sigma_hr', q)
-                H_emi -= (big_delta / 2) * self._build_operator('sigma_hh', q)
-                H_emi -= (delta / 2) * self._build_operator('sigma_rr', q)
-            return H_emi
 
         def build_coeffs_ops(basis, addr):
             """Build coefficients and operators for the hamiltonian QobjEvo."""
@@ -275,10 +266,6 @@ class Simulation:
                 if self.samples[addr][basis]:
                     qobj_list += build_coeffs_ops(basis, addr)
 
-        # Spontaneous emission hamiltonian
-        if self._damping["Emission"]:
-            qobj_list += [make_spontaneous_emission_term(self)]
-
         self._times = adapt(np.arange(self._tot_duration,
                                       dtype=np.double)/1000)
 
@@ -307,10 +294,9 @@ class Simulation:
         return self._hamiltonian(time/1000)  # Creates new Qutip.Qobj
 
     # Run Simulation Evolution using Qutip
-    def run(self, initial_state=None, progress_bar=None, spam=False, t=-1,
-            spam_dict={"eta": 0.005, "epsilon": 0.01, "epsilon_prime": 0.05},
-            **options):
-        """Simulate the sequence using QuTiP's solvers.
+    def run(self, initial_state=None, progress_bar=None, **options):
+        """Simulate the sequence using QuTiP's solvers. Only clean results
+            are returned.
 
         Keyword Args:
             initial_state (array): The initial quantum state of the
@@ -318,43 +304,17 @@ class Simulation:
                qutip.Qobj instance.
             progress_bar (bool): If True, the progress bar of QuTiP's sesolve()
                 will be shown.
-            spam (bool): If True, returns a NoisyResults object instead of a
-                CleanResults one, taking into account SPAM errors.
-            t (int): Time at which the results are to be returned ;
-                only used with noisy simulations.
-            spam_dict: A dictionary containing SPAM error probabilities.
 
         Returns:
-            SimulationResults: Object containing the time evolution results.
-                Is a CleanResults object if spam = False, and a NoisyResults
-                one if spam = True.
+            CleanResults: Object containing the time evolution results.
         """
         # we need this measurement basis to project states
         meas_basis = 'digital' if (self.basis_name == 'digital' or
                                    self.basis_name == 'all') \
             else 'ground-rydberg'
 
-        if not isinstance(spam_dict, dict):
-            raise TypeError("`spam_dict` must be a dictionary")
-
         if hasattr(self._seq, '_measurement'):
             meas_basis = self._seq._measurement
-
-        if spam:
-            return NoisyResults(
-                self.detection_SPAM(spam_dict, t=t,
-                                    meas_basis=meas_basis),
-                self._size, self.basis_name, meas_basis=meas_basis)
-
-        def _build_lindblad_term(self):
-            L = []
-            Gamma_r = 4 * np.pi
-            Gamma_g = 2 * np.pi
-            for q in self._qdict.keys():
-                C_1 = np.sqrt(Gamma_r) * self._build_operator('sigma_hr', q)
-                C_2 = np.sqrt(Gamma_g) * self._build_operator('sigma_hg', q)
-                L += [C_1, C_2]
-            return L
 
         if initial_state is not None:
             if isinstance(initial_state, qutip.Qobj):
@@ -370,23 +330,63 @@ class Simulation:
             all_ground = [self.basis['g'] for _ in range(self._size)]
             self._initial_state = qutip.tensor(all_ground)
 
-        L = []
-
-        if self._damping["Emission"]:
-            L = _build_lindblad_term(self)
-
         # qutip uses sesolve if c_ops = []
         result = qutip.mesolve(self._hamiltonian,
                                self._initial_state,
                                self._times,
-                               c_ops=L,
+                               c_ops=[],
                                progress_bar=progress_bar,
                                options=qutip.Options(max_step=5,
                                                      **options)
                                )
 
-        return CleanResults(result.states, self.dim, self._size,
-                            self.basis_name, meas_basis)
+        clean = CleanResults(result.states, self.dim, self._size,
+                             self.basis_name, meas_basis)
+
+        return clean
+
+    def run_noisy(self, initial_state=None, spam=False,
+                  t=-1, spam_dict={"eta": 0.005, "epsilon": 0.01,
+                                   "epsilon_prime": 0.05},
+                  N_samples=1, **options):
+        """Simulate the sequence using QuTiP's solvers. Only noiseless results
+            are returned.
+
+        Keyword Args:
+            initial_state (array): The initial quantum state of the
+               evolution. Will be transformed into a
+               qutip.Qobj instance.
+            spam (bool): If True, returns a NoisyResults object instead of a
+                CleanResults one, taking into account SPAM errors.
+            t (int): Time at which the results are to be returned.
+            spam_dict: A dictionary containing SPAM error probabilities.
+            N_samples (int): number of times a Doppler noisy run has to be
+                simulated.
+
+        Returns:
+            NoisyResults: Object containing the time evolution results.
+        """
+        meas_basis = 'digital' if (self.basis_name == 'digital' or
+                                   self.basis_name == 'all') \
+            else 'ground-rydberg'
+
+        if spam:
+            return NoisyResults(
+                self.detection_SPAM(spam_dict, t=t,
+                                    meas_basis=meas_basis),
+                self._size, self.basis_name, meas_basis=meas_basis)
+
+        # We run the system multiple times
+        elif self._noise["Doppler"]:
+            total_count = Counter()
+            for _ in range(N_samples):
+                current_res = self.run(initial_state=initial_state)
+                total_count += current_res.sample_state(t=t,
+                                                        meas_basis=meas_basis,
+                                                        N_samples=1)
+            prob = Counter({k: v / N_samples for k, v in total_count.items()})
+            return NoisyResults(prob, self._size, self.basis_name,
+                                meas_basis=meas_basis, N_samples=N_samples)
 
     def detection_SPAM(self, spam, t=-1, N_samples=1000,
                        meas_basis='ground-rydberg'):
