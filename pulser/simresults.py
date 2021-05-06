@@ -117,7 +117,7 @@ class NoisyResults(SimulationResults):
     """
 
     def __init__(self, run_output, size, basis_name,
-                 meas_basis="ground-rydberg", dim=2, N_samples=1000):
+                 meas_basis="ground-rydberg", dim=2):
         """
         Initializes a new NoisyResults instance.
 
@@ -134,15 +134,12 @@ class NoisyResults(SimulationResults):
             size (int): The number of atoms in the register.
             basis_name (str): The basis indicating the addressed atoms after
                 the pulse sequence ('ground-rydberg', 'digital' or 'all').
-            N_samples (int): number of times the simulations that gave this
-                result have been run.
 
         Keyword Args:
             meas_basis (None or str): The basis in which a sampling measurement
                 is desired.
         """
         super().__init__(run_output, dim, size, basis_name, meas_basis)
-        self.N_samples = N_samples
 
     def get_final_state(self):
         """Get the final state (density matrix here !) of the simulation.
@@ -557,7 +554,8 @@ class CleanResults(SimulationResults):
             spam (dict): dictionnary gathering the SPAM error
             probabilities.
         """
-        sampled_state = self.sample_state(t=t, meas_basis=meas_basis)
+        sampled_state = self.sample_state(t=t, meas_basis=meas_basis,
+                                          N_samples=N_samples)
         detected_sample_dict = Counter()
         for (shot, N_d) in sampled_state.items():
             dict_state = self.detection_from_basis_state(N_d, shot, spam)
