@@ -94,7 +94,7 @@ class Simulation:
             noise_det = 0
             noise_amp = 1
             # detuning offset related to bad preparation, value = ?
-            # not tool large, or else ODE integration errors
+            # not too large, or else ODE integration errors
             det_spam = 150
             for noise in self._noise:
                 if noise == 'doppler':
@@ -295,6 +295,12 @@ class Simulation:
         self._config = {'initial_state': qutip.tensor(all_ground),
                         'eval_t': -1, 'runs': 1, 'samples_per_run': 10}
 
+    def _prepare_spam_detune(self):
+        """Choose atoms that will be badly prepared"""
+        # Tag True if atom is badly prepared
+        self.spam_detune = {qid: (np.random.uniform() < self.spam_dict["eta"])
+                            for qid in self._qid_index}
+
     def get_hamiltonian(self, time):
         """Get the Hamiltonian created from the sequence at a fixed time.
 
@@ -314,7 +320,7 @@ class Simulation:
         return self._hamiltonian(time/1000)  # Creates new Qutip.Qobj
 
     # Run Simulation Evolution using Qutip
-    def run(self, progress_bar=None, **options):
+    def run(self, eval_t=None, progress_bar=None, **options):
         """Simulate the sequence using QuTiP's solvers. Only clean results
             are returned.
 
@@ -327,11 +333,12 @@ class Simulation:
             _states attribute contains QuTiP quantum states, not a Counter.
         """
 
-        def _run_clean():
+        def _run_clean(eval_t=None):
             # CLEAN SIMULATION:
+            eval_times = eval_t if eval_t else self._times
             result = qutip.mesolve(self._hamiltonian,
                                    self._config['initial_state'],
-                                   self._times,
+                                   eval_times,
                                    c_ops=[],
                                    progress_bar=progress_bar,
                                    options=qutip.Options(max_step=5,
@@ -365,24 +372,24 @@ class Simulation:
                 self._extract_samples()
                 self._construct_hamiltonian()
                 current_res = _run_clean()
-                if self._noise["SPAM"]:
+                if self._noise['SPAM']:
                     total_count += \
                         current_res.sampling_with_detection_errors(
-                                self._noise["SPAM"], t=self._config['eval_t'],
+                                self.spam_dict, t=self._config['eval_t'],
                                 meas_basis=meas_basis,
                                 N_samples=self._config['samples_per_run'])
                 else:
                     total_count += current_res.sample_state(
                                 t=self._config['eval_t'],
                                 meas_basis=meas_basis,
-                                N_samples=self._config['N_samples_per_run'])
+                                N_samples=self._config['samples_per_run'])
             prob = Counter({k: v / (self._config['runs']
                                     * self._config['samples_per_run'])
                             for k, v in total_count.items()})
             return NoisyResults(prob, self._size, self.basis_name,
                                 meas_basis=meas_basis)
         else:
-            return _run_clean()
+            return _run_clean(eval_t)
 
     def add_noise(self, noise_type):
         """Adds a noise model to the Simulation instance.
@@ -395,11 +402,6 @@ class Simulation:
                         epsilon: false positives
                         epsilon_prime: false negatives
         """
-        def _prepare_spam_detune(self):
-            eta = self.spam_dict["eta"]
-            self.spam_detune = {qid: (np.random.uniform() < eta)
-                                for qid in self._qid_index}
-
         # Check proper input:
         noise_dict_set = {'doppler', 'amplitude', 'SPAM'}
         if noise_type not in noise_dict_set:
@@ -410,8 +412,7 @@ class Simulation:
             # Set SPAM parameters (experimental)
             self.spam_dict = {"eta": 0.005, "epsilon": 0.01,
                               "epsilon_prime": 0.05}
-            # Returns True if qubit qid is badly prepared
-            _prepare_spam_detune()
+            self._prepare_spam_detune()
         # Register added noise(s)
         self._noise[noise_type] = True
         # Rebuild hamiltonian
