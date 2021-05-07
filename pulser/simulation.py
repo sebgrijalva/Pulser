@@ -37,10 +37,15 @@ class Simulation:
         sampling_rate (float): The fraction of samples that we wish to
             extract from the pulse sequence to simulate. Has to be a
             value between 0.05 and 1.0.
+        trajectories (dict): Dictionary with the trajectories of each atom
+            in the register.
     """
 
-    def __init__(self, sequence, sampling_rate=1.0):
-        """Initialize the Simulation with a specific pulser.Sequence."""
+    def __init__(self, sequence, sampling_rate=1.0, trajectories=None):
+        """Initialize the Simulation with a specific pulser.Sequence.
+
+        (AND NOW WITH SOME ATOM TRAJECTORIES)
+        """
         if not isinstance(sequence, Sequence):
             raise TypeError("The provided sequence has to be a valid "
                             "pulser.Sequence instance.")
@@ -50,6 +55,7 @@ class Simulation:
             raise ValueError("No instructions given for the channels in the "
                              "sequence.")
         self._seq = sequence
+        self._traj = trajectories
         self._qdict = self._seq.qubit_info
         self._size = len(self._qdict)
         self._tot_duration = max(
@@ -161,21 +167,33 @@ class Simulation:
                                   dtype=int)
             return full_array[indexes]
 
-        def make_vdw_term():
-            """Construct the Van der Waals interaction Term.
+        def make_vdw_terms():
+            """Construct the Van der Waals interaction Terms.
+
+            (NOW WITH DYNAMIC ATOM POSITIONS)
 
             For each pair of qubits, calculate the distance between them, then
             assign the local operator "sigma_rr" at each pair. The units are
             given so that the coefficient includes a 1/hbar factor.
             """
-            vdw = 0
+            # Dynamic Register terms:
+            # Van der Waals Interaction Terms:
             # Get every pair without duplicates
-            for q1, q2 in itertools.combinations(self._qdict.keys(), r=2):
-                dist = np.linalg.norm(
-                    self._qdict[q1] - self._qdict[q2])
-                U = 0.5 * self._seq._device.interaction_coeff / dist**6
-                vdw += U * self._build_operator('sigma_rr', q1, q2)
-            return vdw
+            if self._traj:
+                vdw = []
+                for q1, q2 in itertools.combinations(self._qdict.keys(), r=2):
+                    dist = np.array([np.linalg.norm([x, y]) for x, y
+                                     in self._traj[q1] - self._traj[q2]])
+                    U = 0.5 * self._seq._device.interaction_coeff / dist**6
+                    vdw.append([self._build_operator('sigma_rr', q1, q2), U])
+                return vdw
+            else:
+                vdw = 0
+                for q1, q2 in itertools.combinations(self._qdict.keys(), r=2):
+                    dist = np.linalg.norm(self._qdict[q1] - self._qdict[q2])
+                    U = 0.5 * self._seq._device.interaction_coeff / dist**6
+                    vdw += U * self._build_operator('sigma_rr', q1, q2)
+                return [vdw]
 
         def build_coeffs_ops(basis, addr):
             """Build coefficients and operators for the hamiltonian QobjEvo."""
@@ -216,12 +234,11 @@ class Simulation:
             self.operators[addr][basis] = operators
             return terms
 
-        # Time independent term:
         if self.basis_name == 'digital':
             qobj_list = []
         else:
             # Van der Waals Interaction Terms
-            qobj_list = [make_vdw_term()] if self._size > 1 else []
+            qobj_list = make_vdw_terms() if self._size > 1 else []
 
         # Time dependent terms:
         for addr in self.samples:
