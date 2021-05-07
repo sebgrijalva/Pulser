@@ -70,24 +70,14 @@ class Simulation:
                                for basis in ['ground-rydberg', 'digital']}
                         for addr in ['Global', 'Local']}
         self.operators = deepcopy(self.samples)
-        # Returns True if qubit qid is badly prepared
-        self.spam_detune = {qid: False for qid in self._qid_index}
-        self._prepare_spam_detune()
+        self._noise = {}
+
+        # Build (clean) hamiltonian
         self._extract_samples()
         self._build_basis_and_op_matrices()
         self._construct_hamiltonian()
 
-        self._noise = {}
         self._init_config()
-
-    def _prepare_spam_detune(self):
-        # Each atom has probability eta to be badly prepared
-        if self._noise["SPAM"]:
-            self.spam_dict = {"eta": 0.005, "epsilon": 0.01,
-                              "epsilon_prime": 0.05}
-            eta = self.spam_dict["eta"]
-            for qid in self._qid_index:
-                self.spam_detune[qid] = (np.random.uniform() < eta)
 
     def _extract_samples(self):
         """Populate samples dictionary with every pulse in the sequence."""
@@ -106,24 +96,23 @@ class Simulation:
             # detuning offset related to bad preparation, value = ?
             # not tool large, or else ODE integration errors
             det_spam = 150
+            for noise in self._noise:
+                if noise == 'doppler':
+                    # sigma = k_eff \Delta v
+                    # effective formula
+                    noise_det += np.random.normal(0, 2*np.pi*0.12)
 
-            if(self._noise["Doppler"]):
-                # sigma = k_eff \Delta v
-                # effective formula
-                noise_det += np.random.normal(0, 2*np.pi*0.12)
+                # qubit qid badly prepared
+                if noise == 'SPAM' and self.spam_detune[qid]:
+                    print("detune")
+                    noise_det += det_spam
 
-            # qubit qid badly prepared
-            if(self._noise["SPAM"] and self.spam_detune[qid]):
-                print("detune")
-                noise_det += det_spam
-
-            if(self._noise["Amplitude"]):
-                position = self._qdict[qid]
-                # Gaussian beam for global pulses
-                r = np.linalg.norm(position)
-                w0 = 175.
-                noise_amp = np.random.normal(1, 1e-3) * \
-                    np.exp(-(r/w0)**2)
+                if noise == 'amplitude':
+                    position = self._qdict[qid]
+                    # Gaussian beam for global pulses
+                    r = np.linalg.norm(position)
+                    w0 = 175.
+                    noise_amp = np.random.normal(1, 1e-3) * np.exp(-(r/w0)**2)
 
             samples_dict['amp'][slot.ti:slot.tf] = \
                 slot.type.amplitude.samples * noise_amp
@@ -136,9 +125,7 @@ class Simulation:
             basis = self._seq.declared_channels[channel].basis
 
             # Case of clean global simulations
-            if addr == 'Global' and not \
-                    (self._noise["Doppler"] or self._noise["Amplitude"]
-                     or self._noise["SPAM"]):
+            if addr == 'Global' and not self._noise:
                 samples_dict = self.samples[addr][basis]
                 if not samples_dict:
                     samples_dict = prepare_dict()
@@ -340,7 +327,7 @@ class Simulation:
             _states attribute contains QuTiP quantum states, not a Counter.
         """
 
-        def _run_clean(self):
+        def _run_clean():
             # CLEAN SIMULATION:
             result = qutip.mesolve(self._hamiltonian,
                                    self._config['initial_state'],
@@ -364,7 +351,7 @@ class Simulation:
         if hasattr(self._seq, '_measurement'):
             meas_basis = self._seq._measurement
 
-        if self.noise:
+        if self._noise:
             #  NOISY SIMULATION:
             meas_basis = 'digital' if (self.basis_name == 'digital' or
                                        self.basis_name == 'all') \
@@ -395,35 +382,44 @@ class Simulation:
             return NoisyResults(prob, self._size, self.basis_name,
                                 meas_basis=meas_basis)
         else:
-            _run_clean()
+            return _run_clean()
 
-    def add_noise(self, noise_type, noise_value):
-        """Adds a noise model to the Simulation instance
+    def add_noise(self, noise_type):
+        """Adds a noise model to the Simulation instance.
             Args:
-                Doppler (bool) : Noisy doppler runs
-                Amplitude (bool) : Noisy gaussian beam
-                SPAM (dict) = SPAM dictionary including:
-                                eta (float): preparation errors
-                                eps (float): false positives
-                                eps_prime (float): false negatives
+                noise_type (str): Choose among:
+                    'doppler': Noisy doppler runs
+                    'amplitude: Noisy gaussian beam
+                    'SPAM': SPAM errors. Adds:
+                        eta: Probability of each atom to be badly prepared
+                        epsilon: false positives
+                        epsilon_prime: false negatives
         """
+        def _prepare_spam_detune(self):
+            eta = self.spam_dict["eta"]
+            self.spam_detune = {qid: (np.random.uniform() < eta)
+                                for qid in self._qid_index}
+
+        # Check proper input:
         noise_dict_set = {'doppler', 'amplitude', 'SPAM'}
         if noise_type not in noise_dict_set:
             raise ValueError('Not a valid noisy type')
+
+        # Add noise/error:
         if noise_type == 'SPAM':
-            self.spam_dict = self._noise["SPAM"]
-            if not isinstance(noise_value, dict):
-                raise ValueError('``SPAM`` needs a dictionary containing:\n'
-                                 '``eta`` (preparation errors), ',
-                                 '``eps`` (false positives), ',
-                                 '``eps_prime``(false negatives).')
-        else:
-            if not isinstance(noise_value, bool):
-                raise ValueError('Noise value needs to be a boolean.')
+            # Set SPAM parameters (experimental)
+            self.spam_dict = {"eta": 0.005, "epsilon": 0.01,
+                              "epsilon_prime": 0.05}
+            # Returns True if qubit qid is badly prepared
+            _prepare_spam_detune()
+        # Register added noise(s)
+        self._noise[noise_type] = True
+        # Rebuild hamiltonian
+        self._extract_samples()
+        self._build_basis_and_op_matrices()
+        self._construct_hamiltonian()
 
-        self._noise[noise_type] = noise_value
-
-    def remove_noise(self):
+    def remove_all_noise(self):
         """Removes noise from simulation"""
         self._noise = {}
 
