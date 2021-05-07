@@ -41,14 +41,8 @@ class Simulation:
             value between 0.05 and 1.0.
     """
 
-    def __init__(self, sequence, sampling_rate=1.0, noise={"Doppler": False,
-                                                           "Amplitude": False,
-                                                           "SPAM": True}):
+    def __init__(self, sequence, sampling_rate=1.0):
         """Initialize the Simulation with a specific pulser.Sequence.
-           Args:
-                noise (dict): noise["Doppler"] = True for noisy doppler runs
-                              noise["Amplitude"] = True for noisy gaussian beam
-                              noise["SPAM"] = True for SPAM runs
         """
         if not isinstance(sequence, Sequence):
             raise TypeError("The provided sequence has to be a valid "
@@ -59,7 +53,6 @@ class Simulation:
             raise ValueError("No instructions given for the channels in the "
                              "sequence.")
         self._seq = sequence
-        self._noise = noise
         self._qdict = self._seq.qubit_info
         self._size = len(self._qdict)
         self._tot_duration = max(
@@ -83,6 +76,9 @@ class Simulation:
         self._extract_samples()
         self._build_basis_and_op_matrices()
         self._construct_hamiltonian()
+
+        self._noise = {}
+        self._init_config()
 
     def _prepare_spam_detune(self):
         # Each atom has probability eta to be badly prepared
@@ -300,6 +296,18 @@ class Simulation:
 
         self._hamiltonian = ham
 
+    def _init_config(self):
+        """Sets default configuration for the Simulation.
+
+        initial_state (array): The initial quantum state of the
+           evolution. Will be transformed into a
+           qutip.Qobj instance.
+        """
+        # by default, initial state is "ground" state of g-r basis.
+        all_ground = [self.basis['g'] for _ in range(self._size)]
+        self._config = {'initial_state': qutip.tensor(all_ground),
+                        'eval_t': -1, 'runs': 1, 'samples_per_run': 10}
+
     def get_hamiltonian(self, time):
         """Get the Hamiltonian created from the sequence at a fixed time.
 
@@ -319,14 +327,11 @@ class Simulation:
         return self._hamiltonian(time/1000)  # Creates new Qutip.Qobj
 
     # Run Simulation Evolution using Qutip
-    def run(self, initial_state=None, progress_bar=None, **options):
+    def run(self, progress_bar=None, **options):
         """Simulate the sequence using QuTiP's solvers. Only clean results
             are returned.
 
         Keyword Args:
-            initial_state (array): The initial quantum state of the
-               evolution. Will be transformed into a
-               qutip.Qobj instance.
             progress_bar (bool): If True, the progress bar of QuTiP's sesolve()
                 will be shown.
 
@@ -334,6 +339,23 @@ class Simulation:
             CleanResults: Object containing the time evolution results. Its
             _states attribute contains QuTiP quantum states, not a Counter.
         """
+
+        def _run_clean(self):
+            # CLEAN SIMULATION:
+            result = qutip.mesolve(self._hamiltonian,
+                                   self._config['initial_state'],
+                                   self._times,
+                                   c_ops=[],
+                                   progress_bar=progress_bar,
+                                   options=qutip.Options(max_step=5,
+                                                         **options)
+                                   )
+
+            clean = CleanResults(result.states, self.dim, self._size,
+                                 self.basis_name, meas_basis)
+
+            return clean
+
         # we need this measurement basis to project states
         meas_basis = 'digital' if (self.basis_name == 'digital' or
                                    self.basis_name == 'all') \
@@ -342,39 +364,72 @@ class Simulation:
         if hasattr(self._seq, '_measurement'):
             meas_basis = self._seq._measurement
 
-        if initial_state is not None:
-            if isinstance(initial_state, qutip.Qobj):
-                if initial_state.shape != (self.dim**self._size, 1):
-                    raise ValueError("Incompatible shape of initial_state")
-                self._initial_state = initial_state
-            else:
-                if initial_state.shape != (self.dim**self._size,):
-                    raise ValueError("Incompatible shape of initial_state")
-                self._initial_state = qutip.Qobj(initial_state)
+        if self.noise:
+            #  NOISY SIMULATION:
+            meas_basis = 'digital' if (self.basis_name == 'digital' or
+                                       self.basis_name == 'all') \
+                else 'ground-rydberg'
+
+            # We run the system multiple times
+            total_count = Counter()
+            for _ in range(self._config['runs']):
+                # new run, new random noise
+                self._prepare_spam_detune()
+                self._extract_samples()
+                self._construct_hamiltonian()
+                current_res = _run_clean()
+                if self._noise["SPAM"]:
+                    total_count += \
+                        current_res.sampling_with_detection_errors(
+                                self._noise["SPAM"], t=self._config['eval_t'],
+                                meas_basis=meas_basis,
+                                N_samples=self._config['samples_per_run'])
+                else:
+                    total_count += current_res.sample_state(
+                                t=self._config['eval_t'],
+                                meas_basis=meas_basis,
+                                N_samples=self._config['N_samples_per_run'])
+            prob = Counter({k: v / (self._config['runs']
+                                    * self._config['samples_per_run'])
+                            for k, v in total_count.items()})
+            return NoisyResults(prob, self._size, self.basis_name,
+                                meas_basis=meas_basis)
         else:
-            # by default, initial state is "ground" state of g-r basis.
-            all_ground = [self.basis['g'] for _ in range(self._size)]
-            self._initial_state = qutip.tensor(all_ground)
+            _run_clean()
 
-        # qutip uses sesolve if c_ops = []
-        result = qutip.mesolve(self._hamiltonian,
-                               self._initial_state,
-                               self._times,
-                               c_ops=[],
-                               progress_bar=progress_bar,
-                               options=qutip.Options(max_step=5,
-                                                     **options)
-                               )
+    def add_noise(self, noise_type, noise_value):
+        """Adds a noise model to the Simulation instance
+            Args:
+                Doppler (bool) : Noisy doppler runs
+                Amplitude (bool) : Noisy gaussian beam
+                SPAM (dict) = SPAM dictionary including:
+                                eta (float): preparation errors
+                                eps (float): false positives
+                                eps_prime (float): false negatives
+        """
+        noise_dict_set = {'doppler', 'amplitude', 'SPAM'}
+        if noise_type not in noise_dict_set:
+            raise ValueError('Not a valid noisy type')
+        if noise_type == 'SPAM':
+            self.spam_dict = self._noise["SPAM"]
+            if not isinstance(noise_value, dict):
+                raise ValueError('``SPAM`` needs a dictionary containing:\n'
+                                 '``eta`` (preparation errors), ',
+                                 '``eps`` (false positives), ',
+                                 '``eps_prime``(false negatives).')
+        else:
+            if not isinstance(noise_value, bool):
+                raise ValueError('Noise value needs to be a boolean.')
 
-        clean = CleanResults(result.states, self.dim, self._size,
-                             self.basis_name, meas_basis)
+        self._noise[noise_type] = noise_value
 
-        return clean
+    def remove_noise(self):
+        """Removes noise from simulation"""
+        self._noise = {}
 
-    def run_noisy(self, initial_state=None,
-                  t=-1, N_runs=1, N_samples_per_run=10, **options):
-        """Simulate the sequence using QuTiP's solvers. Only noiseless results
-            are returned.
+    def config(self, parameter, value):
+        """Include additional parameters to simulation. Will be necessary for
+        noisy simulations.
 
         Keyword Args:
             initial_state (array): The initial quantum state of the
@@ -388,34 +443,29 @@ class Simulation:
                 cutting down on computing time, but unrealistic.
             N_runs (int): number of runs needed : each run draws a new random
                 noise.
-
-        Returns:
-            NoisyResults: Object containing the time evolution results.
         """
-        meas_basis = 'digital' if (self.basis_name == 'digital' or
-                                   self.basis_name == 'all') \
-            else 'ground-rydberg'
 
-        # We run the system multiple times
-        total_count = Counter()
-        for _ in range(N_runs):
-            # new run, new random noise
-            self._prepare_spam_detune()
-            self._extract_samples()
-            self._construct_hamiltonian()
-            current_res = self.run(initial_state=initial_state)
-            if self._noise["SPAM"]:
-                total_count += \
-                    current_res.sampling_with_detection_errors(
-                        self.spam_dict, t=t, meas_basis=meas_basis,
-                        N_samples=N_samples_per_run)
-            else:
-                total_count += current_res.sample_state(
-                    t=t, meas_basis=meas_basis, N_samples=N_samples_per_run)
-        prob = Counter({k: v / (N_runs * N_samples_per_run) for
-                        k, v in total_count.items()})
-        return NoisyResults(prob, self._size, self.basis_name,
-                            meas_basis=meas_basis)
+        if parameter not in self._config:
+            raise ValueError('Not a valid setting')
+
+        else:
+            if parameter == 'initial_state':
+                if isinstance(parameter, qutip.Qobj):
+                    if parameter.shape != (self.dim**self._size, 1):
+                        raise ValueError("Incompatible shape of initial_state")
+                    self._initial_state = parameter
+                else:
+                    if parameter.shape != (self.dim**self._size,):
+                        raise ValueError("Incompatible shape of initial_state")
+                    self._initial_state = qutip.Qobj(parameter)
+            self._config[parameter] = value
+
+    def show_config(self):
+        print(self._config)
+
+    def reset_config(self):
+        self._init_config()
+        print('Configuration has been set to default')
 
     def detection_SPAM(self, spam, t=-1, N_samples=1000,
                        meas_basis='ground-rydberg'):
