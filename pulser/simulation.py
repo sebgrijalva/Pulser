@@ -98,9 +98,8 @@ class Simulation:
                     noise_det += np.random.normal(0, 2*np.pi*0.12)
 
                 # qubit qid badly prepared
-                print(self.spam_detune)
                 if noise == 'SPAM' and self.spam_detune[qid]:
-                    print(f"faulty {qid}. detuning by {det_spam}")
+                    print(f"faulty {qid}")
                     noise_det += det_spam
 
                 if noise == 'amplitude':
@@ -335,6 +334,10 @@ class Simulation:
                               "epsilon_prime": 0.05}
         # Register added noise(s)
         self._noise[noise_type] = True
+        # Reset any previously sequence:
+        self.samples = {addr: {basis: {}
+                               for basis in ['ground-rydberg', 'digital']}
+                        for addr in ['Global', 'Local']}
 
     def remove_all_noise(self):
         """Removes noise from simulation"""
@@ -381,7 +384,7 @@ class Simulation:
         print('Configuration has been set to default')
 
     # Run Simulation Evolution using Qutip
-    def run(self, eval_t=None, progress_bar=None, **options):
+    def run(self, t_list=None, progress_bar=None, **options):
         """Simulate the sequence using QuTiP's solvers. Only clean results
             are returned.
 
@@ -397,68 +400,73 @@ class Simulation:
             if hasattr(self._seq, '_measurement'):
                 return self._seq._measurement
             else:
-                return 'digital' if (self.basis_name == 'digital' or
-                                     self.basis_name == 'all') \
-                    else 'ground-rydberg'
+                if self.basis_name in {'digital', 'all'}:
+                    return 'digital'
+                else:
+                    return 'ground-rydberg'
 
-        def _initialization():
+        def _build_hamiltonian():
             self._extract_samples()
             self._build_basis_and_op_matrices()
             if 'initial_state' not in self._config:
                 all_ground = [self.basis['g'] for _ in range(self._size)]
                 self._config['initial_state'] = qutip.tensor(all_ground)
             self._construct_hamiltonian()
-            return _assign_meas_basis()
 
-        def _run_clean(eval_t=None, m_basis=None, subroutine=False):
-            # CLEAN SIMULATION:
-            # Build (clean) hamiltonian
-            if not subroutine:
-                m_basis = _initialization()
+        def _run_solver(t_list=None, as_subroutine=False,
+                        measurement_basis=None):
+            if not as_subroutine:
+                # CLEAN SIMULATION:
+                # Build (clean) hamiltonian
+                _build_hamiltonian()
+                measurement_basis = _assign_meas_basis()
 
-            eval_times = eval_t if eval_t else self._times
-
+            time_list = t_list if t_list else self._times
             result = qutip.mesolve(self._hamiltonian,
                                    self._config['initial_state'],
-                                   eval_times,
+                                   time_list,
                                    c_ops=[],
                                    progress_bar=progress_bar,
                                    options=qutip.Options(max_step=5,
                                                          **options)
                                    )
-            clean = CleanResults(result.states, self.dim, self._size,
-                                 self.basis_name, m_basis)
-
-            return clean
+            return CleanResults(result.states, self.dim, self._size,
+                                self.basis_name, measurement_basis)
 
         if self._noise:
             #  NOISY SIMULATION:
             # We run the system multiple times
             total_count = Counter()
             for _ in range(self._config['runs']):
-                # new run, new random noise
+                # At each run, new random noise
                 self._prepare_spam_detune()
-                meas_basis = _initialization()
-                current_res = _run_clean(subroutine=True, m_basis=meas_basis)
+                _build_hamiltonian()
+                meas_basis = _assign_meas_basis()
+                # Get CleanResults instance from sequence with added noise:
+                res_with_noise = _run_solver(as_subroutine=True,
+                                             measurement_basis=meas_basis)
 
+                # Extract statistics at eval time (final time by default):
                 if self._noise['SPAM']:
                     total_count += \
-                        current_res.sampling_with_detection_errors(
-                                self.spam_dict, t=self._config['eval_t'],
-                                meas_basis=meas_basis,
-                                N_samples=self._config['samples_per_run'])
-                else:
-                    total_count += current_res.sample_state(
+                        res_with_noise.sampling_with_detection_errors(
+                                self.spam_dict,
                                 t=self._config['eval_t'],
                                 meas_basis=meas_basis,
                                 N_samples=self._config['samples_per_run'])
+                else:
+                    total_count += res_with_noise.sample_state(
+                                t=self._config['eval_t'],
+                                meas_basis=meas_basis,
+                                N_samples=self._config['samples_per_run'])
+
             prob = Counter({k: v / (self._config['runs']
                                     * self._config['samples_per_run'])
                             for k, v in total_count.items()})
             return NoisyResults(prob, self._size, self.basis_name,
                                 meas_basis=meas_basis)
         else:
-            return _run_clean(eval_t)
+            return _run_solver(t_list)
 
     def detection_SPAM(self, spam, t=-1, N_samples=1000,
                        meas_basis='ground-rydberg'):
