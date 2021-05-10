@@ -72,11 +72,6 @@ class Simulation:
         self.operators = deepcopy(self.samples)
         self._noise = {}
 
-        # Build (clean) hamiltonian
-        self._extract_samples()
-        self._build_basis_and_op_matrices()
-        self._construct_hamiltonian()
-
         self._init_config()
 
     def _extract_samples(self):
@@ -87,7 +82,7 @@ class Simulation:
                     'det': np.zeros(self._tot_duration),
                     'phase': np.zeros(self._tot_duration)}
 
-        def write_samples(slot, samples_dict, qid=""):
+        def write_samples(slot, samples_dict, qid=None):
             """constructs hamiltonian coefficients, taking into account, if
                 necessary, noise errors, which are local and depend
                 on the qubit's id qid"""
@@ -103,8 +98,9 @@ class Simulation:
                     noise_det += np.random.normal(0, 2*np.pi*0.12)
 
                 # qubit qid badly prepared
+                print(self.spam_detune)
                 if noise == 'SPAM' and self.spam_detune[qid]:
-                    print("detune")
+                    print(f"faulty {qid}. detuning by {det_spam}")
                     noise_det += det_spam
 
                 if noise == 'amplitude':
@@ -140,7 +136,7 @@ class Simulation:
                 for slot in self._seq._schedule[channel]:
                     if isinstance(slot.type, Pulse):
                         # global to local
-                        for qubit in self._qid_index.keys():
+                        for qubit in self._qid_index:
                             if qubit not in samples_dict:
                                 samples_dict[qubit] = prepare_dict()
                             write_samples(slot, samples_dict[qubit], qid=qubit)
@@ -290,16 +286,7 @@ class Simulation:
            evolution. Will be transformed into a
            qutip.Qobj instance.
         """
-        # by default, initial state is "ground" state of g-r basis.
-        all_ground = [self.basis['g'] for _ in range(self._size)]
-        self._config = {'initial_state': qutip.tensor(all_ground),
-                        'eval_t': -1, 'runs': 1, 'samples_per_run': 10}
-
-    def _prepare_spam_detune(self):
-        """Choose atoms that will be badly prepared"""
-        # Tag True if atom is badly prepared
-        self.spam_detune = {qid: (np.random.uniform() < self.spam_dict["eta"])
-                            for qid in self._qid_index}
+        self._config = {'eval_t': -1, 'runs': 1, 'samples_per_run': 10}
 
     def get_hamiltonian(self, time):
         """Get the Hamiltonian created from the sequence at a fixed time.
@@ -319,77 +306,11 @@ class Simulation:
             raise ValueError("Provided time is negative.")
         return self._hamiltonian(time/1000)  # Creates new Qutip.Qobj
 
-    # Run Simulation Evolution using Qutip
-    def run(self, eval_t=None, progress_bar=None, **options):
-        """Simulate the sequence using QuTiP's solvers. Only clean results
-            are returned.
-
-        Keyword Args:
-            progress_bar (bool): If True, the progress bar of QuTiP's sesolve()
-                will be shown.
-
-        Returns:
-            CleanResults: Object containing the time evolution results. Its
-            _states attribute contains QuTiP quantum states, not a Counter.
-        """
-
-        def _run_clean(eval_t=None):
-            # CLEAN SIMULATION:
-            eval_times = eval_t if eval_t else self._times
-            result = qutip.mesolve(self._hamiltonian,
-                                   self._config['initial_state'],
-                                   eval_times,
-                                   c_ops=[],
-                                   progress_bar=progress_bar,
-                                   options=qutip.Options(max_step=5,
-                                                         **options)
-                                   )
-
-            clean = CleanResults(result.states, self.dim, self._size,
-                                 self.basis_name, meas_basis)
-
-            return clean
-
-        # we need this measurement basis to project states
-        meas_basis = 'digital' if (self.basis_name == 'digital' or
-                                   self.basis_name == 'all') \
-            else 'ground-rydberg'
-
-        if hasattr(self._seq, '_measurement'):
-            meas_basis = self._seq._measurement
-
-        if self._noise:
-            #  NOISY SIMULATION:
-            meas_basis = 'digital' if (self.basis_name == 'digital' or
-                                       self.basis_name == 'all') \
-                else 'ground-rydberg'
-
-            # We run the system multiple times
-            total_count = Counter()
-            for _ in range(self._config['runs']):
-                # new run, new random noise
-                self._prepare_spam_detune()
-                self._extract_samples()
-                self._construct_hamiltonian()
-                current_res = _run_clean()
-                if self._noise['SPAM']:
-                    total_count += \
-                        current_res.sampling_with_detection_errors(
-                                self.spam_dict, t=self._config['eval_t'],
-                                meas_basis=meas_basis,
-                                N_samples=self._config['samples_per_run'])
-                else:
-                    total_count += current_res.sample_state(
-                                t=self._config['eval_t'],
-                                meas_basis=meas_basis,
-                                N_samples=self._config['samples_per_run'])
-            prob = Counter({k: v / (self._config['runs']
-                                    * self._config['samples_per_run'])
-                            for k, v in total_count.items()})
-            return NoisyResults(prob, self._size, self.basis_name,
-                                meas_basis=meas_basis)
-        else:
-            return _run_clean(eval_t)
+    def _prepare_spam_detune(self):
+        """Choose atoms that will be badly prepared"""
+        # Tag True if atom is badly prepared
+        self.spam_detune = {qid: (np.random.uniform() < self.spam_dict["eta"])
+                            for qid in self._qid_index}
 
     def add_noise(self, noise_type):
         """Adds a noise model to the Simulation instance.
@@ -405,20 +326,15 @@ class Simulation:
         # Check proper input:
         noise_dict_set = {'doppler', 'amplitude', 'SPAM'}
         if noise_type not in noise_dict_set:
-            raise ValueError('Not a valid noisy type')
+            raise ValueError('Not a valid noise type')
 
         # Add noise/error:
         if noise_type == 'SPAM':
             # Set SPAM parameters (experimental)
             self.spam_dict = {"eta": 0.005, "epsilon": 0.01,
                               "epsilon_prime": 0.05}
-            self._prepare_spam_detune()
         # Register added noise(s)
         self._noise[noise_type] = True
-        # Rebuild hamiltonian
-        self._extract_samples()
-        self._build_basis_and_op_matrices()
-        self._construct_hamiltonian()
 
     def remove_all_noise(self):
         """Removes noise from simulation"""
@@ -463,6 +379,86 @@ class Simulation:
     def reset_config(self):
         self._init_config()
         print('Configuration has been set to default')
+
+    # Run Simulation Evolution using Qutip
+    def run(self, eval_t=None, progress_bar=None, **options):
+        """Simulate the sequence using QuTiP's solvers. Only clean results
+            are returned.
+
+        Keyword Args:
+            progress_bar (bool): If True, the progress bar of QuTiP's sesolve()
+                will be shown.
+
+        Returns:
+            CleanResults: Object containing the time evolution results. Its
+            _states attribute contains QuTiP quantum states, not a Counter.
+        """
+        def _assign_meas_basis():
+            if hasattr(self._seq, '_measurement'):
+                return self._seq._measurement
+            else:
+                return 'digital' if (self.basis_name == 'digital' or
+                                     self.basis_name == 'all') \
+                    else 'ground-rydberg'
+
+        def _initialization():
+            self._extract_samples()
+            self._build_basis_and_op_matrices()
+            if 'initial_state' not in self._config:
+                all_ground = [self.basis['g'] for _ in range(self._size)]
+                self._config['initial_state'] = qutip.tensor(all_ground)
+            self._construct_hamiltonian()
+            return _assign_meas_basis()
+
+        def _run_clean(eval_t=None, m_basis=None, subroutine=False):
+            # CLEAN SIMULATION:
+            # Build (clean) hamiltonian
+            if not subroutine:
+                m_basis = _initialization()
+
+            eval_times = eval_t if eval_t else self._times
+
+            result = qutip.mesolve(self._hamiltonian,
+                                   self._config['initial_state'],
+                                   eval_times,
+                                   c_ops=[],
+                                   progress_bar=progress_bar,
+                                   options=qutip.Options(max_step=5,
+                                                         **options)
+                                   )
+            clean = CleanResults(result.states, self.dim, self._size,
+                                 self.basis_name, m_basis)
+
+            return clean
+
+        if self._noise:
+            #  NOISY SIMULATION:
+            # We run the system multiple times
+            total_count = Counter()
+            for _ in range(self._config['runs']):
+                # new run, new random noise
+                self._prepare_spam_detune()
+                meas_basis = _initialization()
+                current_res = _run_clean(subroutine=True, m_basis=meas_basis)
+
+                if self._noise['SPAM']:
+                    total_count += \
+                        current_res.sampling_with_detection_errors(
+                                self.spam_dict, t=self._config['eval_t'],
+                                meas_basis=meas_basis,
+                                N_samples=self._config['samples_per_run'])
+                else:
+                    total_count += current_res.sample_state(
+                                t=self._config['eval_t'],
+                                meas_basis=meas_basis,
+                                N_samples=self._config['samples_per_run'])
+            prob = Counter({k: v / (self._config['runs']
+                                    * self._config['samples_per_run'])
+                            for k, v in total_count.items()})
+            return NoisyResults(prob, self._size, self.basis_name,
+                                meas_basis=meas_basis)
+        else:
+            return _run_clean(eval_t)
 
     def detection_SPAM(self, spam, t=-1, N_samples=1000,
                        meas_basis='ground-rydberg'):
