@@ -99,7 +99,6 @@ class Simulation:
 
                 # qubit qid badly prepared
                 if noise == 'SPAM' and self.spam_detune[qid]:
-                    print(f"faulty {qid}")
                     noise_det += det_spam
 
                 if noise == 'amplitude':
@@ -420,6 +419,8 @@ class Simulation:
         Keyword Args:
             progress_bar (bool): If True, the progress bar of QuTiP's sesolve()
                 will be shown.
+            t_list (list): Times at which results are returned. Only used in
+                noiseless runs.
 
         Returns:
             CleanResults: Object containing the time evolution results. Its
@@ -484,17 +485,10 @@ class Simulation:
                                 meas_basis=meas_basis,
                                 N_samples=self._config['samples_per_run'])
                 else:
-                    """total_count += res_with_noise.sample_state(
-                                t=self._config['eval_t'],
-                                meas_basis=meas_basis,
-                                N_samples=self._config['samples_per_run'])"""
-                    total_count += \
-                        res_with_noise.sampling_with_detection_errors(
-                                {'eta': 0, 'epsilon': 0, 'epsilon_prime': 0},
+                    total_count += res_with_noise.sample_state(
                                 t=self._config['eval_t'],
                                 meas_basis=meas_basis,
                                 N_samples=self._config['samples_per_run'])
-
             prob = Counter({k: v / (self._config['runs']
                                     * self._config['samples_per_run'])
                             for k, v in total_count.items()})
