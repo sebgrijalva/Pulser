@@ -524,8 +524,8 @@ class CleanResults(SimulationResults):
         """
         n_0 = shot.count('0')
         n_1 = shot.count('1')
-        eps = spam["epsilon"]
-        eps_p = spam["epsilon_prime"]
+        eps = spam['epsilon']
+        eps_p = spam['epsilon_prime']
         # Verified
         prob_1_to_0 = eps_p * (1 - eps) ** n_0 * (1 - eps_p) ** (n_1 - 1)
         prob_0_to_1 = eps * (1 - eps) ** (n_0 - 1) * (1 - eps_p) ** n_1

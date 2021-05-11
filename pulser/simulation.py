@@ -70,7 +70,7 @@ class Simulation:
                                for basis in ['ground-rydberg', 'digital']}
                         for addr in ['Global', 'Local']}
         self.operators = deepcopy(self.samples)
-        self._noise = {}
+        self._noise = []
 
         self._init_config()
 
@@ -95,7 +95,7 @@ class Simulation:
                 if noise == 'doppler':
                     # sigma = k_eff \Delta v
                     # effective formula
-                    noise_det += np.random.normal(0, 2*np.pi*0.12)
+                    noise_det += np.random.normal(0, self.doppler_sigma)
 
                 # qubit qid badly prepared
                 if noise == 'SPAM' and self.spam_detune[qid]:
@@ -308,7 +308,7 @@ class Simulation:
     def _prepare_spam_detune(self):
         """Choose atoms that will be badly prepared"""
         # Tag True if atom is badly prepared
-        self.spam_detune = {qid: (np.random.uniform() < self.spam_dict["eta"])
+        self.spam_detune = {qid: (np.random.uniform() < self.spam_dict['eta'])
                             for qid in self._qid_index}
 
     def add_noise(self, noise_type):
@@ -330,18 +330,47 @@ class Simulation:
         # Add noise/error:
         if noise_type == 'SPAM':
             # Set SPAM parameters (experimental)
-            self.spam_dict = {"eta": 0.005, "epsilon": 0.01,
-                              "epsilon_prime": 0.05}
+            self.init_spam()
+        if noise_type == 'doppler':
+            self.init_doppler_sigma()
         # Register added noise(s)
-        self._noise[noise_type] = True
+        self._noise.append(noise_type)
         # Reset any previously sequence:
+        self.reset_sequence()
+
+    def remove_all_noise(self):
+        """Removes noise from simulation"""
+        self._noise = []
+        # Reset any previously sequence:
+        self.reset_sequence()
+
+    def reset_sequence(self):
         self.samples = {addr: {basis: {}
                                for basis in ['ground-rydberg', 'digital']}
                         for addr in ['Global', 'Local']}
 
-    def remove_all_noise(self):
-        """Removes noise from simulation"""
-        self._noise = {}
+    def set_spam(self, **values):
+        """Allows the user to change SPAM parameters in dictionary"""
+        for param in values:
+            if param not in {'eta', 'epsilon', 'epsilon_prime'}:
+                raise ValueError('Not a valid SPAM parameter')
+            self.spam_dict[param] = values[param]
+
+    def init_doppler_sigma(self):
+        self.doppler_sigma = 2*np.pi*0.12
+
+    def set_doppler_sigma(self, sigma):
+        self.doppler_sigma = sigma
+
+    def init_spam(self):
+        self.spam_dict = {'eta': 0.005, 'epsilon': 0.01,
+                          'epsilon_prime': 0.05}
+
+    def set_noise(self, *noise_param):
+        """Sets noise parameters as those in argument"""
+        self.remove_all_noise()
+        for noise in noise_param:
+            self.add_noise(noise)
 
     def config(self, parameter, value):
         """Include additional parameters to simulation. Will be necessary for
@@ -434,20 +463,20 @@ class Simulation:
                                 self.basis_name, measurement_basis)
 
         if self._noise:
-            #  NOISY SIMULATION:
+            # NOISY SIMULATION:
             # We run the system multiple times
             total_count = Counter()
             for _ in range(self._config['runs']):
                 # At each run, new random noise
-                self._prepare_spam_detune()
+                if 'SPAM' in self._noise:
+                    self._prepare_spam_detune()
                 _build_hamiltonian()
                 meas_basis = _assign_meas_basis()
                 # Get CleanResults instance from sequence with added noise:
                 res_with_noise = _run_solver(as_subroutine=True,
                                              measurement_basis=meas_basis)
-
                 # Extract statistics at eval time (final time by default):
-                if self._noise['SPAM']:
+                if 'SPAM' in self._noise:
                     total_count += \
                         res_with_noise.sampling_with_detection_errors(
                                 self.spam_dict,
@@ -455,7 +484,13 @@ class Simulation:
                                 meas_basis=meas_basis,
                                 N_samples=self._config['samples_per_run'])
                 else:
-                    total_count += res_with_noise.sample_state(
+                    """total_count += res_with_noise.sample_state(
+                                t=self._config['eval_t'],
+                                meas_basis=meas_basis,
+                                N_samples=self._config['samples_per_run'])"""
+                    total_count += \
+                        res_with_noise.sampling_with_detection_errors(
+                                {'eta': 0, 'epsilon': 0, 'epsilon_prime': 0},
                                 t=self._config['eval_t'],
                                 meas_basis=meas_basis,
                                 N_samples=self._config['samples_per_run'])
@@ -479,8 +514,8 @@ class Simulation:
                     accounting for SPAM errors.
         """
         N = self._size
-        eta = spam["eta"]
-        eps = spam["epsilon"]
+        eta = spam['eta']
+        eps = spam['epsilon']
         seq = self._seq
 
         def _seq_without_k(self, qid):
